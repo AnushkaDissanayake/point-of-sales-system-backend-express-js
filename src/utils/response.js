@@ -1,5 +1,15 @@
 function successResponse(res, data = null, message = 'Success') {
-  return res.json({ status: 'SUCCESS', message, data });
+  // Matches Spring Boot: object fields spread flat, arrays stay as 'data', null omitted
+  if (data === null || data === undefined) {
+    return res.json({ status: 'SUCCESS', message });
+  }
+  if (Array.isArray(data)) {
+    // Spring Boot returns arrays as the direct body — e.g. category/list returns [{...}, ...]
+    // Frontend reads response.data which IS the array directly
+    return res.json(data);
+  }
+  // Object: spread fields flat — e.g. { itemList: Page } becomes top-level fields
+  return res.json({ status: 'SUCCESS', message, ...data });
 }
 
 function errorResponse(res, statusCode, errorCode, failReason) {

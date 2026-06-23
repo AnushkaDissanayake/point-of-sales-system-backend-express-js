@@ -65,7 +65,7 @@ router.put('/edit-category', authenticate, upload.single('file'), (req, res) => 
 router.get('/list', authenticate, (req, res) => {
   try {
     const db = getDb();
-    return successResponse(res, db.prepare('SELECT * FROM category WHERE shop_key = ? ORDER BY name').all(req.user.shop_key));
+    return successResponse(res, { categoryList: db.prepare('SELECT * FROM category WHERE shop_key = ? ORDER BY name').all(req.user.shop_key) });
   } catch (err) {
     return errorResponse(res, 500, 'E000', err.message);
   }

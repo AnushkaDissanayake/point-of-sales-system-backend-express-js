@@ -141,6 +141,20 @@ function subscriptionActivationRotated(shopKey, planLabel, newCode) {
   return layout('New subscription activation code', body);
 }
 
+function licenseRequestCode(shopKey, planLabel, requestCode, requesterSummary) {
+  const body = `
+    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#334155;">A shop is requesting a license activation.</p>
+    <p style="margin:0 0 20px;padding:12px 16px;background:#f8fafc;border-radius:8px;font-size:14px;color:#475569;">
+      Shop ID: <strong>${escape(shopKey)}</strong><br/>
+      Plan requested: <strong>${escape(planLabel)}</strong><br/>
+      Requested by: <strong>${escape(requesterSummary)}</strong>
+    </p>
+    <p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#334155;">Paste this request code into the License Tool to generate a signed license token:</p>
+    <div style="margin:0 0 20px;padding:14px 16px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;font-family:monospace;font-size:13px;word-break:break-all;color:#0f172a;">${escape(requestCode)}</div>
+    <p style="margin:0;font-size:13px;line-height:1.5;color:#64748b;">Sign this in the License Tool and send the resulting license token back to the shop.</p>`;
+  return layout('License activation request', body);
+}
+
 module.exports = {
   otpVerification,
   passwordReset,
@@ -148,5 +162,6 @@ module.exports = {
   shopRegistrationNotification,
   staffRegistrationNotification,
   subscriptionActivationOtp,
-  subscriptionActivationRotated
+  subscriptionActivationRotated,
+  licenseRequestCode
 };

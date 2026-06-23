@@ -3,8 +3,8 @@ const { getDb } = require('../config/database');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/response');
 const { setSubscriptionOtp, verifySubscriptionOtp, clearSubscriptionOtp, generateOtp, isOnCooldown, setCooldown, hasActiveSubscriptionActivationCodes } = require('../utils/otp');
-const { sendSubscriptionRotatedToAppOwner } = require('../utils/email');
-const { sendSubscriptionOtpToAppOwner } = require('../utils/email');
+const { sendSubscriptionRotatedToAppOwner, sendSubscriptionOtpToAppOwner, sendEmail } = require('../utils/email');
+const templates = require('../utils/emailTemplates');
 require('dotenv').config();
 
 const router = express.Router();
@@ -29,9 +29,10 @@ function buildLicenseResponse(subscription, shopKey) {
   };
 }
 
-// GET /public-key — matches Spring Boot field name "publicKeyPem"
+// GET /public-key — returns actual RSA public key PEM, matches Spring Boot SubscriptionLicenseService.getPublicKeyPem()
 router.get('/public-key', (req, res) => {
-  return successResponse(res, { publicKeyPem: 'N/A - SQLite backend uses simple token verification' });
+  const pem = loadPublicKey();
+  return successResponse(res, { publicKeyPem: pem || 'Public key not configured' });
 });
 
 // GET /my
@@ -77,19 +78,27 @@ router.post('/generate-request-code', authenticate, requireAdmin, async (req, re
       return res.status(503).json({ errorCode: 'E000', failReason: 'App owner email is not configured on this server.' });
     }
 
+    const planLabel = { MONTHLY:'Monthly', THREE_MONTHS:'3 months', SIX_MONTHS:'6 months', YEARLY:'Yearly', LIFETIME:'Lifetime' }[normalizedPlan] || normalizedPlan;
+    const db = getDb();
+
+    // Fetch current subscription to get licenseVersion and offlineGraceDays — matches Spring Boot generateRequestCode()
+    const sub = db.prepare('SELECT license_version, offline_grace_days FROM shop_subscription WHERE shop_key = ?').get(req.user.shop_key);
+    const licenseVersion = (sub?.license_version ?? 0) + 1;
+    const offlineGraceDays = sub?.offline_grace_days ?? 7;
+
+    // Matches Spring Boot SubscriptionLicenseService.generateRequestCode() JSON structure exactly
     const requestCode = Buffer.from(JSON.stringify({
       shopKey: req.user.shop_key,
       plan: normalizedPlan,
-      timestamp: new Date().toISOString()
+      licenseVersion,
+      offlineGraceDays,
+      machineId: ''
     })).toString('base64');
 
-    const planLabel = { MONTHLY:'Monthly', THREE_MONTHS:'3 months', SIX_MONTHS:'6 months', YEARLY:'Yearly', LIFETIME:'Lifetime' }[normalizedPlan] || normalizedPlan;
-    const db = getDb();
     const admin = db.prepare(`SELECT user_name, email FROM usr_user WHERE shop_key = ? AND role_type = 'ADMIN' LIMIT 1`).get(req.user.shop_key);
     const requesterSummary = admin ? `${admin.user_name} (${admin.email})` : req.user.shop_key;
 
-    const { sendEmail } = require('../utils/email');
-    const html = `<p>License activation request for shop <b>${req.user.shop_key}</b> (${planLabel}) from ${requesterSummary}.</p><p>Request code: <code>${requestCode}</code></p>`;
+    const html = templates.licenseRequestCode(req.user.shop_key, planLabel, requestCode, requesterSummary);
     sendEmail(appOwnerEmail, `License activation request — shop ${req.user.shop_key} (${planLabel})`, html).catch(console.error);
 
     return successResponse(res, null, 'License request sent to the app owner. Wait for the license token and paste it below.');
@@ -98,35 +107,62 @@ router.post('/generate-request-code', authenticate, requireAdmin, async (req, re
   }
 });
 
+// Load RSA public key for license token verification (matches Spring Boot SubscriptionLicenseService)
+function loadPublicKey() {
+  const fs = require('fs');
+  const path = require('path');
+  const keyFile = path.join(__dirname, '../../data/license-public.key');
+  if (!fs.existsSync(keyFile)) return null;
+  const b64 = fs.readFileSync(keyFile, 'utf8').trim();
+  return `-----BEGIN PUBLIC KEY-----\n${b64.match(/.{1,64}/g).join('\n')}\n-----END PUBLIC KEY-----`;
+}
+
 // POST /activate-with-license
 router.post('/activate-with-license', authenticate, (req, res) => {
   try {
     const { licenseToken } = req.body;
-    if (!licenseToken) return errorResponse(res, 400, 'E002', 'licenseToken required');
+    if (!licenseToken || !licenseToken.trim()) return errorResponse(res, 400, 'E002', 'License token is required');
 
-    const db = getDb();
-
-    // Simple license validation - in production this would verify a signed token
-    let decoded;
-    try {
-      decoded = JSON.parse(Buffer.from(licenseToken, 'base64').toString());
-    } catch {
-      return errorResponse(res, 400, 'E002', 'Invalid license token');
+    const publicKeyPem = loadPublicKey();
+    if (!publicKeyPem) {
+      return res.status(503).json({ errorCode: 'E000', failReason: 'License public key not configured on this server.' });
     }
 
-    const validUntil = decoded.validUntil || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    // Verify RS256 JWT and extract claims — matches Spring Boot SubscriptionLicenseService.extractClaims()
+    const jwt = require('jsonwebtoken');
+    let claims;
+    try {
+      claims = jwt.verify(licenseToken, publicKeyPem, { algorithms: ['RS256'] });
+    } catch (e) {
+      return errorResponse(res, 400, 'E001', 'Invalid license token');
+    }
 
+    // Spring Boot claim keys: sk=shopKey, pl=plan, st=status, vf=validFrom, vu=validUntil, lv=licenseVersion, og=offlineGraceDays
+    const shopKey = claims.sk;
+    const plan = claims.pl || 'MONTHLY';
+    const status = claims.st || 'ACTIVE';
+    const validUntil = claims.vu ? new Date(claims.vu * 1000).toISOString() : null;
+    const validFrom = claims.vf ? new Date(claims.vf * 1000).toISOString() : new Date().toISOString();
+    const licenseVersion = claims.lv ?? 1;
+    const offlineGraceDays = claims.og ?? 7;
+
+    // The token's shopKey must match the authenticated user's shop
+    if (shopKey !== req.user.shop_key) {
+      return errorResponse(res, 400, 'E001', 'License token is not for this shop');
+    }
+
+    const db = getDb();
     db.prepare(`
-      INSERT INTO shop_subscription (shop_key, plan, status, valid_from, valid_until, license_token, license_version)
-      VALUES (?, ?, 'ACTIVE', datetime('now'), ?, ?, 1)
+      INSERT INTO shop_subscription (shop_key, plan, status, valid_from, valid_until, license_token, license_version, offline_grace_days)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(shop_key) DO UPDATE SET
-        status = 'ACTIVE', plan = excluded.plan, valid_from = datetime('now'),
-        valid_until = excluded.valid_until, license_token = excluded.license_token,
-        license_version = license_version + 1, last_updated_date = datetime('now')
-    `).run(req.user.shop_key, decoded.plan || 'MONTHLY', validUntil, licenseToken);
+        status = excluded.status, plan = excluded.plan,
+        valid_from = excluded.valid_from, valid_until = excluded.valid_until,
+        license_token = excluded.license_token, license_version = excluded.license_version,
+        offline_grace_days = excluded.offline_grace_days, last_updated_date = datetime('now')
+    `).run(req.user.shop_key, plan, status, validFrom, validUntil, licenseToken, licenseVersion, offlineGraceDays);
 
     const sub = db.prepare('SELECT * FROM shop_subscription WHERE shop_key = ?').get(req.user.shop_key);
-    // SubscriptionActivateResponseDTO { message, subscription, license } — matches Spring Boot exactly
     return successResponse(res, {
       message: 'Subscription activated successfully',
       subscription: buildLicenseResponse(sub, req.user.shop_key),
@@ -263,10 +299,9 @@ router.post('/shops/:shopKey/issue-activation-otp', authenticate, async (req, re
     setSubscriptionOtp(normalizedShopKey, otp, plan);
 
     const planLabel = { MONTHLY:'Monthly', THREE_MONTHS:'3 months', SIX_MONTHS:'6 months', YEARLY:'Yearly', LIFETIME:'Lifetime' }[plan] || plan;
-    const { sendEmail } = require('../utils/email');
     const appOwnerEmail = process.env.APP_OWNER_EMAIL || '';
     if (appOwnerEmail) {
-      const html = `<p>Subscription activation code for shop <b>${normalizedShopKey}</b> (${planLabel}).</p><p>Code: <b>${otp}</b></p>`;
+      const html = templates.subscriptionActivationOtp(normalizedShopKey, planLabel, otp, 'App owner (subscription management)');
       sendEmail(appOwnerEmail, `Subscription activation code — shop ${normalizedShopKey} (${planLabel})`, html).catch(console.error);
     }
 
@@ -274,7 +309,8 @@ router.post('/shops/:shopKey/issue-activation-otp', authenticate, async (req, re
       const db = getDb();
       const shopAdmin = db.prepare(`SELECT u.email, ud.first_name FROM usr_user u LEFT JOIN user_detail ud ON u.id = ud.user_id WHERE u.shop_key = ? AND u.role_type = 'ADMIN' AND u.enabled = 1 LIMIT 1`).get(normalizedShopKey);
       if (shopAdmin?.email) {
-        const html = `<p>Your POS subscription activation code for shop <b>${normalizedShopKey}</b> (${planLabel}): <b>${otp}</b></p>`;
+        const recipientName = shopAdmin.first_name || 'Shop administrator';
+        const html = templates.subscriptionActivationOtp(normalizedShopKey, planLabel, otp, recipientName);
         sendEmail(shopAdmin.email, 'Your POS subscription activation code', html).catch(console.error);
       }
     }

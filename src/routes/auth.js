@@ -264,8 +264,9 @@ router.post('/login', async (req, res) => {
     // Spring Boot AuthResponseDTO: name = firstName only (line 557 in AuthenticationController)
     const firstName = userDetail?.first_name || user.user_name;
 
-    // AuthResponseDTO matches Spring Boot exactly
-    return successResponse(res, {
+    // AuthResponseDTO — flat JSON matching Spring Boot (no data: wrapper)
+    return res.json({
+      status: 'SUCCESS',
       accessToken: token,
       tokenType: 'Bearer ',
       name: firstName,
@@ -331,7 +332,9 @@ router.post('/complete-setup', async (req, res) => {
     const userDetail = db.prepare('SELECT * FROM user_detail WHERE user_id = ?').get(user.id);
     const firstName = userDetail?.first_name || newUsername.trim();
 
-    return successResponse(res, {
+    // AuthResponseDTO — flat JSON matching Spring Boot (no data: wrapper)
+    return res.json({
+      status: 'SUCCESS',
       accessToken: token,
       tokenType: 'Bearer ',
       name: firstName,

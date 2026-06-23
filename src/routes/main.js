@@ -28,8 +28,8 @@ router.post('/validate-token', authenticate, (req, res) => {
     const accessAllowed = subscription?.status === 'ACTIVE' && (!subscription.valid_until || subscription.valid_until > now);
 
     const detail = db.prepare('SELECT first_name FROM user_detail WHERE user_id = ?').get(user.id);
-    // TokenValidationResponseDTO matches Spring Boot exactly
-    return successResponse(res, {
+    // TokenValidationResponseDTO — flat JSON matching Spring Boot (no data: wrapper)
+    return res.json({
       narration: 'Token validated.',
       name: detail?.first_name || user.user_name,
       userType: user.role_type,
