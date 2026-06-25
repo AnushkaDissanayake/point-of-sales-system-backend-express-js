@@ -2,6 +2,17 @@ const { getDb } = require('../config/database');
 
 const LOW_STOCK_THRESHOLD = 10;
 
+function getLowStockThreshold(db, shopKey) {
+  const setting = db.prepare(
+    "SELECT setting_value FROM shop_setting WHERE shop_key = ? AND setting_key = 'inventory.low_stock_threshold'"
+  ).get(shopKey);
+  if (setting) {
+    const val = parseFloat(setting.setting_value);
+    if (!isNaN(val)) return val;
+  }
+  return LOW_STOCK_THRESHOLD;
+}
+
 function createNotification(shopKey, userId, title, description, type, referenceType, referenceId) {
   try {
     const db = getDb();
@@ -27,6 +38,7 @@ function createNotification(shopKey, userId, title, description, type, reference
 function checkAndNotifyStock(shopKey, itemId, itemName, newQuantity) {
   try {
     const db = getDb();
+    const threshold = getLowStockThreshold(db, shopKey);
 
     if (newQuantity <= 0) {
       // OUT_OF_STOCK — remove any existing low-stock alert for this item first
@@ -40,7 +52,7 @@ function checkAndNotifyStock(shopKey, itemId, itemName, newQuantity) {
         `Item "${itemName}" is out of stock`,
         'OUT_OF_STOCK', 'ITEM', itemId
       );
-    } else if (newQuantity <= LOW_STOCK_THRESHOLD) {
+    } else if (newQuantity <= threshold) {
       // Only create if not already out-of-stock notified
       createNotification(
         shopKey, null,
@@ -48,6 +60,9 @@ function checkAndNotifyStock(shopKey, itemId, itemName, newQuantity) {
         `Item "${itemName}" is running low (${newQuantity} remaining)`,
         'LOW_STOCK', 'ITEM', itemId
       );
+    } else {
+      // If it is above the threshold, clear stock alerts for this item!
+      clearStockAlertsForItem(shopKey, itemId);
     }
   } catch (err) {
     console.error('Stock notification error:', err.message);
@@ -91,5 +106,6 @@ module.exports = {
   checkAndNotifyStock,
   createSaleNotification,
   clearStockAlertsForItem,
-  LOW_STOCK_THRESHOLD
+  LOW_STOCK_THRESHOLD,
+  getLowStockThreshold
 };

@@ -39,7 +39,7 @@ function setSubscriptionOtp(shopKey, code, plan) {
 // plan is the plan stored with the OTP (matches Spring Boot SubscriptionVerifyResult.plan())
 function verifySubscriptionOtp(shopKey, code) {
   const entry = subscriptionOtpStore.get(shopKey);
-  if (!entry) return 'expired';
+  if (!entry) return 'invalid';
   if (Date.now() > entry.expiresAt) { subscriptionOtpStore.delete(shopKey); return 'expired'; }
   if (entry.code === code) { return 'valid:' + (entry.plan || 'MONTHLY'); }
 

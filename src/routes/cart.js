@@ -3,11 +3,10 @@ const { getDb } = require('../config/database');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/response');
 const { buildPaginatedQuery, paginatedResponse } = require('../utils/pagination');
-const { createLowStockNotification, createSaleNotification } = require('../services/notificationService');
+const { createLowStockNotification, createSaleNotification, getLowStockThreshold } = require('../services/notificationService');
 const { broadcast } = require('./events');
 
 const router = express.Router();
-const { LOW_STOCK_THRESHOLD } = require('../services/notificationService');
 const ALLOWED_COLUMNS = ['id', 'status', 'payment_method', 'created_date', 'last_updated_date', 'amount_paid'];
 const VALID_PAYMENT_METHODS = ['CASH', 'CARD', 'ONLINE', 'CHEQUE', 'TRANSFER'];
 
@@ -420,6 +419,7 @@ router.post('/complete-cart', authenticate, (req, res) => {
         throw new Error('UNDERPAID:Amount paid is less than total');
       }
 
+      const threshold = getLowStockThreshold(db, req.user.shop_key);
       for (const ci of cartItems) {
         if (ci.stock < ci.quantity) {
           throw new Error(`Insufficient stock for item: ${ci.item_name}`);
@@ -427,7 +427,7 @@ router.post('/complete-cart', authenticate, (req, res) => {
         db.prepare(`UPDATE item SET quantity = quantity - ?, last_updated_date = datetime('now') WHERE id = ?`).run(ci.quantity, ci.item_id);
 
         const newQty = db.prepare('SELECT quantity, name FROM item WHERE id = ?').get(ci.item_id);
-        if (newQty.quantity <= LOW_STOCK_THRESHOLD) {
+        if (newQty.quantity <= threshold) {
           createLowStockNotification(req.user.shop_key, newQty.name, ci.item_id, newQty.quantity);
         }
       }

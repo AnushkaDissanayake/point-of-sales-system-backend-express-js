@@ -2,7 +2,7 @@ const express = require('express');
 const { getDb } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/response');
-const { LOW_STOCK_THRESHOLD } = require('../services/notificationService');
+const { getLowStockThreshold } = require('../services/notificationService');
 
 const router = express.Router();
 
@@ -10,7 +10,8 @@ const router = express.Router();
 function syncLowStockNotifications(shopKey) {
   try {
     const db = getDb();
-    const lowStockItems = db.prepare('SELECT * FROM item WHERE shop_key = ? AND quantity <= ?').all(shopKey, LOW_STOCK_THRESHOLD);
+    const threshold = getLowStockThreshold(db, shopKey);
+    const lowStockItems = db.prepare('SELECT * FROM item WHERE shop_key = ? AND quantity <= ?').all(shopKey, threshold);
     const users = db.prepare('SELECT id FROM usr_user WHERE shop_key = ? AND enabled = 1').all(shopKey);
 
     for (const item of lowStockItems) {

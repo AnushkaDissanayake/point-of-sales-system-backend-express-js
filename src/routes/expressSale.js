@@ -1,8 +1,8 @@
 const express = require('express');
 const { getDb } = require('../config/database');
-const { authenticate, requirePermission } = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/response');
-const { createLowStockNotification, createSaleNotification, LOW_STOCK_THRESHOLD } = require('../services/notificationService');
+const { createLowStockNotification, createSaleNotification, getLowStockThreshold } = require('../services/notificationService');
 const { broadcast } = require('./events');
 
 const router = express.Router();
@@ -77,6 +77,7 @@ router.post('/complete', authenticate, (req, res) => {
 
       const cartId = cartResult.lastInsertRowid;
       let total = 0;
+      const threshold = getLowStockThreshold(db, req.user.shop_key);
 
       for (const line of lines) {
         const qty = parseFloat(line.quantity);
@@ -95,7 +96,7 @@ router.post('/complete', authenticate, (req, res) => {
         db.prepare(`UPDATE item SET quantity = quantity - ?, last_updated_date = datetime('now') WHERE id = ?`).run(qty, line.itemId);
 
         const updatedItem = db.prepare('SELECT quantity, name FROM item WHERE id = ?').get(line.itemId);
-        if (updatedItem.quantity <= LOW_STOCK_THRESHOLD) {
+        if (updatedItem.quantity <= threshold) {
           createLowStockNotification(req.user.shop_key, updatedItem.name, line.itemId, updatedItem.quantity);
         }
 

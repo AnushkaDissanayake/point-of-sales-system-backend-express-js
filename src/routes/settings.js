@@ -9,7 +9,8 @@ const MAX_LOGO_LENGTH = 600000;
 // Matches Spring Boot ShopSettingKeys exactly
 const SHOP_SETTING_KEYS = {
   EXPRESS_SALE_AUTO_PRINT: 'express_sale.auto_print_receipt',
-  EXPRESS_SALE_DEFAULT_PAYMENT_METHOD: 'express_sale.default_payment_method'
+  EXPRESS_SALE_DEFAULT_PAYMENT_METHOD: 'express_sale.default_payment_method',
+  INVENTORY_LOW_STOCK_THRESHOLD: 'inventory.low_stock_threshold'
 };
 const VALID_PAYMENT_METHODS = ['CASH', 'CARD', 'ONLINE', 'CHEQUE', 'TRANSFER'];
 
@@ -22,6 +23,9 @@ router.get('/', authenticate, (req, res) => {
 
     const settingsMap = {};
     settings.forEach(s => { settingsMap[s.setting_key] = s.setting_value; });
+
+    const thresholdVal = parseFloat(settingsMap[SHOP_SETTING_KEYS.INVENTORY_LOW_STOCK_THRESHOLD]);
+    const lowStockThreshold = isNaN(thresholdVal) ? 10 : thresholdVal;
 
     return successResponse(res, {
       status: 'SUCCESS',
@@ -37,6 +41,9 @@ router.get('/', authenticate, (req, res) => {
         shopName: shop?.shop_name || '',
         shopLogo: shop?.shop_logo || null,
         shopKey: req.user.role_type === 'ADMIN' ? req.user.shop_key : undefined
+      },
+      inventory: {
+        lowStockThreshold
       }
     });
   } catch (err) {
@@ -48,7 +55,7 @@ router.get('/', authenticate, (req, res) => {
 router.put('/', (req, res) => {
   try {
     const db = getDb();
-    const { expressSale, business } = req.body;
+    const { expressSale, business, inventory } = req.body;
 
     // Business profile — ADMIN only; non-admin sending business block gets 403
     if (business && req.user.role_type !== 'ADMIN') {
@@ -103,6 +110,17 @@ router.put('/', (req, res) => {
         // PaymentMethodUtil.normalize(): "card" stays "card", everything else → "cash"
         const normalizedMethod = method.toLowerCase() === 'card' ? 'card' : 'cash';
         upsertSetting(db, req.user.shop_key, SHOP_SETTING_KEYS.EXPRESS_SALE_DEFAULT_PAYMENT_METHOD, normalizedMethod, req.user.id);
+      }
+    }
+
+    // Inventory settings
+    if (inventory) {
+      const { lowStockThreshold } = inventory;
+      if (lowStockThreshold !== undefined) {
+        const threshold = parseFloat(lowStockThreshold);
+        if (!isNaN(threshold)) {
+          upsertSetting(db, req.user.shop_key, SHOP_SETTING_KEYS.INVENTORY_LOW_STOCK_THRESHOLD, String(threshold), req.user.id);
+        }
       }
     }
 

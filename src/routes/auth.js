@@ -65,6 +65,11 @@ router.post('/register', async (req, res) => {
       return errorResponse(res, 400, 'E001', 'This email has already been registered');
     }
 
+    const appOwnerEmail = process.env.APP_OWNER_EMAIL || '';
+    if (appOwnerEmail && appOwnerEmail.trim().toLowerCase() === email.trim().toLowerCase()) {
+      return errorResponse(res, 400, 'E001', 'This email is reserved for the system application owner');
+    }
+
     let shopKey = null;
 
     if (role === 'ADMIN') {
@@ -291,6 +296,17 @@ router.post('/complete-setup', async (req, res) => {
     const { usernameOrEmail, currentPassword, newUsername, newPassword } = req.body;
     if (!usernameOrEmail || !currentPassword || !newUsername || !newPassword) {
       return errorResponse(res, 400, 'E002', 'All fields are required.');
+    }
+
+    const errors = {};
+    if (newUsername !== undefined && newUsername.trim().length < 3) {
+      errors.newUsername = 'Username should contain at least three characters.';
+    }
+    if (newPassword !== undefined && !PASSWORD_REGEX.test(newPassword)) {
+      errors.newPassword = 'Invalid password format.';
+    }
+    if (Object.keys(errors).length > 0) {
+      return res.status(400).json(errors);
     }
 
     const db = getDb();

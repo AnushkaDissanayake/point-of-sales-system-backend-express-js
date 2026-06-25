@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const { initializeDatabase } = require('./config/database');
 const { authenticate } = require('./middleware/auth');
 const { enforceSubscription } = require('./middleware/subscription');
@@ -37,6 +38,14 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Serve React frontend static files.
+// In production (installed): frontend is at ../frontend relative to backend dir.
+// In dev: not served here — Vite dev server handles it on port 5500.
+const frontendDist = path.join(__dirname, '..', '..', 'frontend');
+if (require('fs').existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+}
+
 // Audit logging on all mutations (skips GET/OPTIONS internally)
 app.use(auditMiddleware);
 
@@ -46,10 +55,10 @@ app.get('/api/v1/health', (req, res) => {
   res.json({ status: 'UP', timestamp: new Date().toISOString(), service: 'AD SmartPOS Backend' });
 });
 
-// POST /backup — matches Spring Boot BackupController exactly
+// POST /backup — triggers the PowerShell backup script
 app.post('/api/v1/backup', (req, res) => {
   const { spawn } = require('child_process');
-  const BACKUP_SCRIPT = 'C:\\Program Files\\AD-SmartPOS\\scripts\\backup.ps1';
+  const BACKUP_SCRIPT = 'C:\\Program Files\\AD-SmartPOS-Express\\scripts\\backup.ps1';
   const timestamp = new Date().toISOString();
   try {
     const proc = spawn('powershell.exe', [
@@ -91,7 +100,18 @@ app.use('/api/v1/settings',     authenticate, enforceSubscription, settingsRoute
 app.use('/api/v1/audit',        authenticate, enforceSubscription, auditRoutes);
 app.use('/api/v1/notifications',authenticate, enforceSubscription, notificationRoutes);
 
-// 404 handler
+// SPA fallback — serve index.html for any non-API GET request so React Router works
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) return next();
+  const indexFile = path.join(__dirname, '..', '..', 'frontend', 'index.html');
+  if (require('fs').existsSync(indexFile)) {
+    res.sendFile(indexFile);
+  } else {
+    next();
+  }
+});
+
+// 404 handler — only reached for unmatched API routes
 app.use((req, res) => {
   res.status(404).json({ errorCode: 'E004', failReason: `Endpoint not found: ${req.method} ${req.path}` });
 });

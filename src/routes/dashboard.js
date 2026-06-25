@@ -3,7 +3,7 @@ const { getDb } = require('../config/database');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/response');
 
-const { LOW_STOCK_THRESHOLD } = require('../services/notificationService');
+const { getLowStockThreshold } = require('../services/notificationService');
 const router = express.Router();
 
 // DashboardPeriod enum: TODAY("today"), WEEK("week"), MONTH("month") — matches Spring Boot exactly
@@ -211,13 +211,14 @@ router.get('/', authenticate, requirePermission('DASHBOARD'), (req, res) => {
       LIMIT 5
     `).all(shopKey, start, end);
 
-    // Low stock — threshold 10 matches Spring Boot
+    // Low stock — dynamic threshold
+    const threshold = getLowStockThreshold(db, shopKey);
     const lowStockItems = db.prepare(`
       SELECT id, name, item_code, quantity FROM item
       WHERE shop_key = ? AND quantity <= ?
       ORDER BY quantity ASC
       LIMIT 10
-    `).all(shopKey, LOW_STOCK_THRESHOLD).slice(0, 5);
+    `).all(shopKey, threshold).slice(0, 5);
 
     // Peak hour — hour with most completed carts in current period
     const peakHourRow = db.prepare(`

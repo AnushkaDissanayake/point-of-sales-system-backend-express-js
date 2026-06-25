@@ -16,6 +16,8 @@ function isAppOwner(user) {
 }
 
 function buildLicenseResponse(subscription, shopKey) {
+  const now = new Date().toISOString();
+  const accessAllowed = subscription?.status === 'ACTIVE' && (!subscription.valid_until || subscription.valid_until > now);
   return {
     shopKey,
     plan: subscription?.plan || 'MONTHLY',
@@ -25,7 +27,8 @@ function buildLicenseResponse(subscription, shopKey) {
     offlineGraceDays: subscription?.offline_grace_days || 7,
     licenseVersion: subscription?.license_version || 0,
     licenseToken: subscription?.license_token,
-    notes: subscription?.notes
+    notes: subscription?.notes,
+    accessAllowed
   };
 }
 
@@ -66,7 +69,9 @@ router.get('/license', authenticate, (req, res) => {
 router.post('/generate-request-code', authenticate, requireAdmin, async (req, res) => {
   try {
     const { plan } = req.body;
-    if (!plan) return errorResponse(res, 400, 'E002', 'Subscription plan is required');
+    if (plan === undefined || plan === null || plan.trim() === '') {
+      return res.status(400).json({ plan: 'must not be blank' });
+    }
 
     const normalizedPlan = plan.trim().toUpperCase();
     if (!VALID_PLANS.includes(normalizedPlan)) {
@@ -101,7 +106,7 @@ router.post('/generate-request-code', authenticate, requireAdmin, async (req, re
     const html = templates.licenseRequestCode(req.user.shop_key, planLabel, requestCode, requesterSummary);
     sendEmail(appOwnerEmail, `License activation request — shop ${req.user.shop_key} (${planLabel})`, html).catch(console.error);
 
-    return successResponse(res, null, 'License request sent to the app owner. Wait for the license token and paste it below.');
+    return successResponse(res, { requestCode }, 'License request sent to the app owner. Wait for the license token and paste it below.');
   } catch (err) {
     return errorResponse(res, 500, 'E000', err.message);
   }
@@ -177,8 +182,10 @@ router.post('/activate-with-license', authenticate, (req, res) => {
 router.post('/activate-with-otp', authenticate, async (req, res) => {
   try {
     const { activationCode, otp, plan } = req.body;
+    if (activationCode === undefined || activationCode === null || activationCode.trim() === '') {
+      return res.status(400).json({ activationCode: 'must not be blank' });
+    }
     const code = activationCode || otp;
-    if (!code) return errorResponse(res, 400, 'E002', 'Activation code is required');
 
     const result = verifySubscriptionOtp(req.user.shop_key, code);
 
@@ -250,7 +257,9 @@ const COOLDOWN_MINUTES = 5;
 router.post('/request-activation-otps', authenticate, requireAdmin, (req, res) => {
   try {
     const { plan } = req.body;
-    if (!plan) return errorResponse(res, 400, 'E002', 'Subscription plan is required');
+    if (plan === undefined || plan === null || plan.trim() === '') {
+      return res.status(400).json({ plan: 'must not be blank' });
+    }
     const normalizedPlan = plan.trim().toUpperCase();
     if (!VALID_PLANS.includes(normalizedPlan)) {
       return errorResponse(res, 400, 'E001', 'Invalid subscription plan');
