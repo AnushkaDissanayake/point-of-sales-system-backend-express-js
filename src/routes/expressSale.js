@@ -93,7 +93,7 @@ router.post('/complete', authenticate, (req, res) => {
           VALUES (?, ?, ?, ?, ?)
         `).run(cartId, line.itemId, qty, soldPrice, discount);
 
-        db.prepare(`UPDATE item SET quantity = quantity - ?, last_updated_date = datetime('now') WHERE id = ?`).run(qty, line.itemId);
+        db.prepare(`UPDATE item SET quantity = quantity - ?, last_updated_date = datetime('now', 'localtime') WHERE id = ?`).run(qty, line.itemId);
 
         const updatedItem = db.prepare('SELECT quantity, name FROM item WHERE id = ?').get(line.itemId);
         if (updatedItem.quantity <= threshold) {
@@ -111,7 +111,7 @@ router.post('/complete', authenticate, (req, res) => {
       }
 
       // Mark cart completed, update amount_paid
-      db.prepare(`UPDATE cart SET status = 1, amount_paid = ?, last_updated_date = datetime('now') WHERE id = ?`).run(finalAmountPaid, cartId);
+      db.prepare(`UPDATE cart SET status = 1, amount_paid = ?, last_updated_date = datetime('now', 'localtime') WHERE id = ?`).run(finalAmountPaid, cartId);
 
       return { cartId, total, finalAmountPaid };
     });

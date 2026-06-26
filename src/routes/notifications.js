@@ -61,7 +61,7 @@ router.get('/', authenticate, (req, res) => {
       referenceType: n.reference_type,
       referenceId: n.reference_id,
       read: n.status === 1,
-      createdAt: n.date_and_time || ''
+      createdAt: n.date_and_time ? n.date_and_time.replace(' ', 'T').replace('Z', '') : ''
     }));
 
     const unreadCount = db.prepare(

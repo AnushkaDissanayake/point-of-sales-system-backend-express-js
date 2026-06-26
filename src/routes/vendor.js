@@ -112,7 +112,7 @@ router.post('/edit-vendor', authenticate, upload.single('file'), (req, res) => {
 
     db.prepare(`
       UPDATE vendor SET name = ?, contact_number = ?, email = ?, address = ?, description = ?,
-        last_arrived_date = ?, next_arrival_date = ?, updated_by = ?, last_updated_date = datetime('now')
+        last_arrived_date = ?, next_arrival_date = ?, updated_by = ?, last_updated_date = datetime('now', 'localtime')
       WHERE id = ?
     `).run(
       name || vendor.name,

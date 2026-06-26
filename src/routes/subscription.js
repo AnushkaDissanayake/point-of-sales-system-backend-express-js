@@ -15,15 +15,34 @@ function isAppOwner(user) {
   return user.email && appOwnerEmail && appOwnerEmail.trim().toLowerCase() === user.email.trim().toLowerCase();
 }
 
+function formatSqliteDate(dateStr) {
+  if (!dateStr) return null;
+  if (typeof dateStr !== 'string') return dateStr;
+  return dateStr.replace(' ', 'T').replace('Z', '');
+}
+
+function getLocalDatetimeString(date = new Date()) {
+  const pad = num => String(num).padStart(2, '0');
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
 function buildLicenseResponse(subscription, shopKey) {
-  const now = new Date().toISOString();
-  const accessAllowed = subscription?.status === 'ACTIVE' && (!subscription.valid_until || subscription.valid_until > now);
+  const now = getLocalDatetimeString().replace(' ', 'T');
+  const validFrom = formatSqliteDate(subscription?.valid_from);
+  const validUntil = formatSqliteDate(subscription?.valid_until);
+  const accessAllowed = subscription?.status === 'ACTIVE' && (!validUntil || validUntil > now);
   return {
     shopKey,
     plan: subscription?.plan || 'MONTHLY',
     status: subscription?.status || 'PENDING',
-    validFrom: subscription?.valid_from,
-    validUntil: subscription?.valid_until,
+    validFrom,
+    validUntil,
     offlineGraceDays: subscription?.offline_grace_days || 7,
     licenseVersion: subscription?.license_version || 0,
     licenseToken: subscription?.license_token,
@@ -54,8 +73,9 @@ router.get('/license', authenticate, (req, res) => {
   try {
     const db = getDb();
     const sub = db.prepare('SELECT * FROM shop_subscription WHERE shop_key = ?').get(req.user.shop_key);
-    const now = new Date().toISOString();
-    const isActive = sub?.status === 'ACTIVE' && (!sub.valid_until || sub.valid_until > now);
+    const now = getLocalDatetimeString().replace(' ', 'T');
+    const formattedValidUntil = formatSqliteDate(sub?.valid_until);
+    const isActive = sub?.status === 'ACTIVE' && (!formattedValidUntil || formattedValidUntil > now);
     return successResponse(res, {
       ...buildLicenseResponse(sub, req.user.shop_key),
       accessAllowed: isActive
@@ -146,8 +166,8 @@ router.post('/activate-with-license', authenticate, (req, res) => {
     const shopKey = claims.sk;
     const plan = claims.pl || 'MONTHLY';
     const status = claims.st || 'ACTIVE';
-    const validUntil = claims.vu ? new Date(claims.vu * 1000).toISOString() : null;
-    const validFrom = claims.vf ? new Date(claims.vf * 1000).toISOString() : new Date().toISOString();
+    const validUntil = claims.vu ? getLocalDatetimeString(new Date(claims.vu * 1000)) : null;
+    const validFrom = claims.vf ? getLocalDatetimeString(new Date(claims.vf * 1000)) : getLocalDatetimeString();
     const licenseVersion = claims.lv ?? 1;
     const offlineGraceDays = claims.og ?? 7;
 
@@ -164,7 +184,7 @@ router.post('/activate-with-license', authenticate, (req, res) => {
         status = excluded.status, plan = excluded.plan,
         valid_from = excluded.valid_from, valid_until = excluded.valid_until,
         license_token = excluded.license_token, license_version = excluded.license_version,
-        offline_grace_days = excluded.offline_grace_days, last_updated_date = datetime('now')
+        offline_grace_days = excluded.offline_grace_days, last_updated_date = datetime('now', 'localtime')
     `).run(req.user.shop_key, plan, status, validFrom, validUntil, licenseToken, licenseVersion, offlineGraceDays);
 
     const sub = db.prepare('SELECT * FROM shop_subscription WHERE shop_key = ?').get(req.user.shop_key);
@@ -218,10 +238,10 @@ router.post('/activate-with-otp', authenticate, async (req, res) => {
 
     db.prepare(`
       INSERT INTO shop_subscription (shop_key, plan, status, valid_from, valid_until)
-      VALUES (?, ?, 'ACTIVE', datetime('now'), ?)
+      VALUES (?, ?, 'ACTIVE', datetime('now', 'localtime'), ?)
       ON CONFLICT(shop_key) DO UPDATE SET
-        status = 'ACTIVE', plan = excluded.plan, valid_from = datetime('now'),
-        valid_until = excluded.valid_until, last_updated_date = datetime('now')
+        status = 'ACTIVE', plan = excluded.plan, valid_from = datetime('now', 'localtime'),
+        valid_until = excluded.valid_until, last_updated_date = datetime('now', 'localtime')
     `).run(req.user.shop_key, storedPlan, validUntil);
 
     const sub = db.prepare('SELECT * FROM shop_subscription WHERE shop_key = ?').get(req.user.shop_key);
@@ -249,7 +269,7 @@ function computeValidUntil(plan) {
     case 'LIFETIME':     return null; // no expiry
     default:             now.setMonth(now.getMonth() + 1);
   }
-  return now.toISOString();
+  return getLocalDatetimeString(now);
 }
 const COOLDOWN_MINUTES = 5;
 
@@ -341,12 +361,30 @@ router.get('/shops', authenticate, (req, res) => {
 
     const db = getDb();
     const shops = db.prepare(`
-      SELECT sd.*, ss.plan, ss.status as sub_status, ss.valid_from, ss.valid_until
+      SELECT sd.shop_key, ss.plan, ss.status, ss.valid_from, ss.valid_until, ss.offline_grace_days, ss.license_version, ss.notes
       FROM shop_detail sd
       LEFT JOIN shop_subscription ss ON sd.shop_key = ss.shop_key
     `).all();
 
-    return successResponse(res, shops);
+    const mappedShops = shops.map(row => {
+      const now = getLocalDatetimeString().replace(' ', 'T');
+      const validFrom = formatSqliteDate(row.valid_from);
+      const validUntil = formatSqliteDate(row.valid_until);
+      const accessAllowed = row.status === 'ACTIVE' && (!validUntil || validUntil > now);
+      return {
+        shopKey: row.shop_key,
+        plan: row.plan || 'MONTHLY',
+        status: row.status || 'PENDING',
+        validFrom,
+        validUntil,
+        offlineGraceDays: row.offline_grace_days || 7,
+        licenseVersion: row.license_version || 0,
+        notes: row.notes || null,
+        accessAllowed
+      };
+    });
+
+    return successResponse(res, mappedShops);
   } catch (err) {
     return errorResponse(res, 500, 'E000', err.message);
   }
@@ -370,7 +408,7 @@ router.put('/shops/:shopKey', authenticate, (req, res) => {
         status = COALESCE(excluded.status, status),
         valid_until = COALESCE(excluded.valid_until, valid_until),
         notes = COALESCE(excluded.notes, notes),
-        last_updated_date = datetime('now')
+        last_updated_date = datetime('now', 'localtime')
     `).run(req.params.shopKey, plan || 'MONTHLY', status || 'ACTIVE', validUntil || null, notes || null);
 
     const sub = db.prepare('SELECT * FROM shop_subscription WHERE shop_key = ?').get(req.params.shopKey);
@@ -392,10 +430,10 @@ router.post('/shops/:shopKey/activate', authenticate, (req, res) => {
 
     db.prepare(`
       INSERT INTO shop_subscription (shop_key, plan, status, valid_from, valid_until)
-      VALUES (?, ?, 'ACTIVE', datetime('now'), ?)
+      VALUES (?, ?, 'ACTIVE', datetime('now', 'localtime'), ?)
       ON CONFLICT(shop_key) DO UPDATE SET
-        plan = excluded.plan, status = 'ACTIVE', valid_from = datetime('now'),
-        valid_until = excluded.valid_until, last_updated_date = datetime('now')
+        plan = excluded.plan, status = 'ACTIVE', valid_from = datetime('now', 'localtime'),
+        valid_until = excluded.valid_until, last_updated_date = datetime('now', 'localtime')
     `).run(req.params.shopKey, plan, validUntil);
 
     const sub = db.prepare('SELECT * FROM shop_subscription WHERE shop_key = ?').get(req.params.shopKey);

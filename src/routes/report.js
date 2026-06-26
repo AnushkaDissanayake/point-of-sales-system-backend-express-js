@@ -137,8 +137,12 @@ router.get('/generate', authenticate, requirePermission('REPORT'), (req, res) =>
           GROUP BY c.id ORDER BY c.last_updated_date DESC LIMIT ? OFFSET ?
         `).all(shopKey, startStr, endStr, safeSize, offset);
         const total = db.prepare(`SELECT COUNT(DISTINCT c.id) as count FROM cart c WHERE c.shop_key = ? AND c.status = 1 AND c.last_updated_date >= ? AND c.last_updated_date < ?`).get(shopKey, startStr, endStr).count;
+        const mappedItems = items.map(item => ({
+          ...item,
+          completedDate: item.completedDate ? item.completedDate.replace(' ', 'T').replace('Z', '') : null
+        }));
         // Spring Boot Page.getNumber() is 0-based
-        response.salesDetail = paginatedResponse(items, total, safePage - 1, safeSize);
+        response.salesDetail = paginatedResponse(mappedItems, total, safePage - 1, safeSize);
         break;
       }
 

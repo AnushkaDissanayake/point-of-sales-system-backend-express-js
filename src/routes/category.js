@@ -52,7 +52,7 @@ router.put('/edit-category', authenticate, upload.single('file'), (req, res) => 
     if (!category) return errorResponse(res, 400, 'E001', 'Entity does not exists.');
 
     // Spring Boot does NOT check for duplicate name during edit
-    db.prepare(`UPDATE category SET name = ?, description = ?, last_updated_date = datetime('now') WHERE id = ?`)
+    db.prepare(`UPDATE category SET name = ?, description = ?, last_updated_date = datetime('now', 'localtime') WHERE id = ?`)
       .run(name ? name.trim() : category.name, description !== undefined ? description : category.description, id);
 
     return successResponse(res, null, 'Category successfully updated');

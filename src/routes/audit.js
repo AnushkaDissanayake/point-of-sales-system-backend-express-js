@@ -30,7 +30,7 @@ router.get('/', authenticate, requireAdmin, (req, res) => {
     // Map to Spring Boot AuditLogDTO camelCase field names
     const items = rows.map(r => ({
       id: r.id,
-      createdDate: r.created_date,
+      createdDate: r.created_date ? r.created_date.replace(' ', 'T').replace('Z', '') : null,
       actorUsername: r.actor_username,
       action: r.action,
       entityType: r.entity_type,

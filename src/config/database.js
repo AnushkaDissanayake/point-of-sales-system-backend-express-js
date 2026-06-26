@@ -26,8 +26,8 @@ function initializeDatabase() {
       address TEXT,
       mobile TEXT,
       shop_logo TEXT,
-      created_date TEXT DEFAULT (datetime('now')),
-      last_updated_date TEXT DEFAULT (datetime('now'))
+      created_date TEXT DEFAULT (datetime('now', 'localtime')),
+      last_updated_date TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
     CREATE TABLE IF NOT EXISTS shop_subscription (
@@ -41,8 +41,8 @@ function initializeDatabase() {
       license_version INTEGER DEFAULT 0,
       license_token TEXT,
       notes TEXT,
-      created_date TEXT DEFAULT (datetime('now')),
-      last_updated_date TEXT DEFAULT (datetime('now')),
+      created_date TEXT DEFAULT (datetime('now', 'localtime')),
+      last_updated_date TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (shop_key) REFERENCES shop_detail(shop_key)
     );
 
@@ -62,8 +62,8 @@ function initializeDatabase() {
       verification_code TEXT,
       forgot_password_requested INTEGER DEFAULT 0,
       admin_created INTEGER DEFAULT 0,
-      created_date TEXT DEFAULT (datetime('now')),
-      last_updated_date TEXT DEFAULT (datetime('now')),
+      created_date TEXT DEFAULT (datetime('now', 'localtime')),
+      last_updated_date TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (shop_key) REFERENCES shop_detail(shop_key)
     );
 
@@ -83,8 +83,8 @@ function initializeDatabase() {
       nic TEXT,
       mobile TEXT,
       image BLOB,
-      created_date TEXT DEFAULT (datetime('now')),
-      last_updated_date TEXT DEFAULT (datetime('now')),
+      created_date TEXT DEFAULT (datetime('now', 'localtime')),
+      last_updated_date TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (user_id) REFERENCES usr_user(id)
     );
 
@@ -103,7 +103,7 @@ function initializeDatabase() {
       setting_key TEXT NOT NULL,
       setting_value TEXT,
       last_updated_by INTEGER,
-      last_updated_date TEXT DEFAULT (datetime('now')),
+      last_updated_date TEXT DEFAULT (datetime('now', 'localtime')),
       UNIQUE(user_id, setting_key),
       FOREIGN KEY (user_id) REFERENCES usr_user(id)
     );
@@ -114,7 +114,7 @@ function initializeDatabase() {
       setting_key TEXT NOT NULL,
       setting_value TEXT,
       last_updated_by INTEGER,
-      last_updated_date TEXT DEFAULT (datetime('now')),
+      last_updated_date TEXT DEFAULT (datetime('now', 'localtime')),
       UNIQUE(shop_key, setting_key),
       FOREIGN KEY (shop_key) REFERENCES shop_detail(shop_key)
     );
@@ -125,8 +125,8 @@ function initializeDatabase() {
       description TEXT,
       shop_id INTEGER,
       shop_key TEXT,
-      created_date TEXT DEFAULT (datetime('now')),
-      last_updated_date TEXT DEFAULT (datetime('now')),
+      created_date TEXT DEFAULT (datetime('now', 'localtime')),
+      last_updated_date TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (shop_key) REFERENCES shop_detail(shop_key)
     );
 
@@ -143,8 +143,8 @@ function initializeDatabase() {
       shop_key TEXT,
       created_by INTEGER,
       updated_by INTEGER,
-      created_date TEXT DEFAULT (datetime('now')),
-      last_updated_date TEXT DEFAULT (datetime('now')),
+      created_date TEXT DEFAULT (datetime('now', 'localtime')),
+      last_updated_date TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (shop_key) REFERENCES shop_detail(shop_key)
     );
 
@@ -178,8 +178,8 @@ function initializeDatabase() {
       shop_key TEXT,
       created_by INTEGER,
       updated_by INTEGER,
-      created_date TEXT DEFAULT (datetime('now')),
-      last_updated_date TEXT DEFAULT (datetime('now')),
+      created_date TEXT DEFAULT (datetime('now', 'localtime')),
+      last_updated_date TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (category_id) REFERENCES category(id),
       FOREIGN KEY (vendor_id) REFERENCES vendor(id),
       FOREIGN KEY (shop_key) REFERENCES shop_detail(shop_key)
@@ -205,8 +205,8 @@ function initializeDatabase() {
       shop_key TEXT,
       created_by INTEGER,
       updated_by INTEGER,
-      created_date TEXT DEFAULT (datetime('now')),
-      last_updated_date TEXT DEFAULT (datetime('now')),
+      created_date TEXT DEFAULT (datetime('now', 'localtime')),
+      last_updated_date TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (shop_key) REFERENCES shop_detail(shop_key)
     );
 
@@ -229,8 +229,8 @@ function initializeDatabase() {
       payment_method TEXT,
       amount_paid REAL DEFAULT 0,
       notes TEXT,
-      created_date TEXT DEFAULT (datetime('now')),
-      last_updated_date TEXT DEFAULT (datetime('now')),
+      created_date TEXT DEFAULT (datetime('now', 'localtime')),
+      last_updated_date TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (customer_id) REFERENCES customer(id),
       FOREIGN KEY (shop_key) REFERENCES shop_detail(shop_key)
     );
@@ -268,7 +268,7 @@ function initializeDatabase() {
       request_details TEXT,
       client_ip TEXT,
       user_agent TEXT,
-      created_date TEXT DEFAULT (datetime('now'))
+      created_date TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
     CREATE TABLE IF NOT EXISTS notification (
@@ -281,7 +281,7 @@ function initializeDatabase() {
       reference_id INTEGER,
       status INTEGER DEFAULT 0,
       user_id INTEGER,
-      date_and_time TEXT DEFAULT (datetime('now')),
+      date_and_time TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (shop_key) REFERENCES shop_detail(shop_key)
     );
 

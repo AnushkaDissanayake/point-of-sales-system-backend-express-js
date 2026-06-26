@@ -124,7 +124,7 @@ router.post('/edit-item', authenticate, requirePermission('MANAGE_INVENTORY'), u
 
     db.prepare(`
       UPDATE item SET item_code = ?, name = ?, description = ?, price = ?, quantity = ?, buying_price = ?,
-        discount = ?, category_id = ?, vendor_id = ?, updated_by = ?, last_updated_date = datetime('now')
+        discount = ?, category_id = ?, vendor_id = ?, updated_by = ?, last_updated_date = datetime('now', 'localtime')
       WHERE id = ?
     `).run(itemCode.trim(), name, description, price, quantity, buyingPrice, discount,
         categoryId || item.category_id, vendorId || item.vendor_id, req.user.id, id);

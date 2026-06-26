@@ -7,7 +7,7 @@ const { createLowStockNotification, createSaleNotification, getLowStockThreshold
 const { broadcast } = require('./events');
 
 const router = express.Router();
-const ALLOWED_COLUMNS = ['id', 'status', 'payment_method', 'created_date', 'last_updated_date', 'amount_paid'];
+const ALLOWED_COLUMNS = ['c.id', 'c.status', 'c.payment_method', 'c.created_date', 'c.last_updated_date', 'c.amount_paid', 'id', 'status', 'payment_method', 'created_date', 'last_updated_date', 'amount_paid'];
 const VALID_PAYMENT_METHODS = ['CASH', 'CARD', 'ONLINE', 'CHEQUE', 'TRANSFER'];
 
 // Returns CartDetailResponseDTO matching Spring Boot exactly
@@ -61,8 +61,8 @@ function getCartDetail(db, cartId, shopKey) {
     subtotal: Math.round(subtotal * 100) / 100,
     totalDiscount: Math.round(totalDiscount * 100) / 100,
     grandTotal,
-    createdDate: cart.created_date,
-    lastUpdatedDate: cart.last_updated_date,
+    createdDate: cart.created_date ? cart.created_date.replace(' ', 'T').replace('Z', '') : null,
+    lastUpdatedDate: cart.last_updated_date ? cart.last_updated_date.replace(' ', 'T').replace('Z', '') : null,
     items: cartItems
   };
 }
@@ -169,7 +169,7 @@ function toCartResponseDTO(db, cart) {
     displayName,
     itemCount: agg.itemCount,
     totalAmount: Math.round(agg.totalAmount * 100) / 100,
-    lastUpdatedDate: cart.last_updated_date
+    lastUpdatedDate: cart.last_updated_date ? cart.last_updated_date.replace(' ', 'T').replace('Z', '') : null
   };
 }
 
@@ -262,7 +262,7 @@ router.post('/add-cartItem', authenticate, (req, res) => {
       }
     }
 
-    db.prepare(`UPDATE cart SET updated_by = ?, last_updated_date = datetime('now') WHERE id = ?`).run(req.user.id, cartId);
+    db.prepare(`UPDATE cart SET updated_by = ?, last_updated_date = datetime('now', 'localtime') WHERE id = ?`).run(req.user.id, cartId);
 
     // Returns AddCartItemResponseDTO { cartId } matching Spring Boot
     return successResponse(res, { cartId: parseInt(cartId) }, 'Items added to cart');
@@ -326,7 +326,7 @@ router.put('/edit-cart', authenticate, (req, res) => {
       db.prepare('UPDATE cart_item SET sold_price = ? WHERE id = ?').run(parseFloat(soldPrice), id);
     }
 
-    db.prepare(`UPDATE cart SET updated_by = ?, last_updated_date = datetime('now') WHERE id = ?`).run(req.user.id, cartItem.cart_id);
+    db.prepare(`UPDATE cart SET updated_by = ?, last_updated_date = datetime('now', 'localtime') WHERE id = ?`).run(req.user.id, cartItem.cart_id);
 
     return successResponse(res, null, 'Cart item updated');
   } catch (err) {
@@ -375,7 +375,7 @@ router.post('/update-cart', authenticate, (req, res) => {
       db.prepare('UPDATE cart SET customer_id = ? WHERE id = ?').run(customerId, cartId);
     }
 
-    db.prepare(`UPDATE cart SET updated_by = ?, last_updated_date = datetime('now') WHERE id = ?`).run(req.user.id, cartId);
+    db.prepare(`UPDATE cart SET updated_by = ?, last_updated_date = datetime('now', 'localtime') WHERE id = ?`).run(req.user.id, cartId);
 
     return successResponse(res, null, 'Cart updated');
   } catch (err) {
@@ -424,7 +424,7 @@ router.post('/complete-cart', authenticate, (req, res) => {
         if (ci.stock < ci.quantity) {
           throw new Error(`Insufficient stock for item: ${ci.item_name}`);
         }
-        db.prepare(`UPDATE item SET quantity = quantity - ?, last_updated_date = datetime('now') WHERE id = ?`).run(ci.quantity, ci.item_id);
+        db.prepare(`UPDATE item SET quantity = quantity - ?, last_updated_date = datetime('now', 'localtime') WHERE id = ?`).run(ci.quantity, ci.item_id);
 
         const newQty = db.prepare('SELECT quantity, name FROM item WHERE id = ?').get(ci.item_id);
         if (newQty.quantity <= threshold) {
@@ -433,7 +433,7 @@ router.post('/complete-cart', authenticate, (req, res) => {
       }
 
       db.prepare(`
-        UPDATE cart SET status = 1, payment_method = ?, amount_paid = ?, sold_by = ?, updated_by = ?, last_updated_date = datetime('now')
+        UPDATE cart SET status = 1, payment_method = ?, amount_paid = ?, sold_by = ?, updated_by = ?, last_updated_date = datetime('now', 'localtime')
         WHERE id = ?
       `).run(resolvedPayment, paidAmt, req.user.id, req.user.id, cartId);
 
@@ -485,7 +485,7 @@ router.post('/cancel-cart', authenticate, (req, res) => {
     if (!cart) return errorResponse(res, 400, 'E001', 'Cart not found');
     if (cart.status !== 0) return errorResponse(res, 400, 'E001', 'Only pending carts can be cancelled');
 
-    db.prepare(`UPDATE cart SET status = -1, updated_by = ?, last_updated_date = datetime('now') WHERE id = ?`).run(req.user.id, cartId);
+    db.prepare(`UPDATE cart SET status = -1, updated_by = ?, last_updated_date = datetime('now', 'localtime') WHERE id = ?`).run(req.user.id, cartId);
 
     return successResponse(res, null, 'Cart cancelled');
   } catch (err) {

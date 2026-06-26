@@ -283,7 +283,7 @@ router.get('/', authenticate, requirePermission('DASHBOARD'), (req, res) => {
       // Matches Spring Boot: COALESCE(NULLIF(TRIM(cu.contact),''), NULLIF(TRIM(cu.name),''), 'Walk-in')
       recentSales: recentSales.map(s => ({
         cartId: s.id,
-        completedAt: s.last_updated_date,
+        completedAt: s.last_updated_date ? s.last_updated_date.replace(' ', 'T').replace('Z', '') : null,
         customer: (s.customer_contact && s.customer_contact.trim()) || (s.customer_name && s.customer_name.trim()) || 'Walk-in',
         items: s.item_count,
         total: s.total,

@@ -21,7 +21,7 @@ function isAppOwner(user) {
 }
 
 // Matches Spring Boot RegisterDTO / CompleteSetupDTO / ResetPasswordDTO @Pattern exactly
-const PASSWORD_REGEX = /^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#&()\-[\]{}:;',?/*~$^+=<>]).{8,20}$/;
+const PASSWORD_REGEX = /^.{6,}$/;
 
 // All FeaturePermission enum names — matches Spring Boot PermissionUtils.resolvePermissionNames() for ADMIN
 const ALL_PERMISSIONS = ['DASHBOARD', 'STORE', 'MANAGE_INVENTORY', 'EXPRESS_SALE', 'CUSTOMER', 'VENDOR', 'CART', 'REPORT', 'SETTINGS'];
@@ -42,7 +42,7 @@ router.post('/register', async (req, res) => {
       return errorResponse(res, 400, 'E002', 'Username must be at least 3 characters');
     }
     if (!password || !PASSWORD_REGEX.test(password)) {
-      return errorResponse(res, 400, 'E002', 'Password must be 8-20 chars with digit, lowercase, uppercase, and special char');
+      return errorResponse(res, 400, 'E002', 'Password must be at least 6 characters');
     }
     if (!email) {
       return errorResponse(res, 400, 'E002', 'Email is required');
@@ -173,7 +173,7 @@ router.post('/verify-email', (req, res) => {
 
     // Check DB column first (survives server restarts), fall back to in-memory
     const validByDb = user.email_verification_code === otp;
-    const result = validByDb ? 'valid' : verifyEmailOtp(email, otp);
+    const result = validByDb ? 'valid' : (verifyEmailOtp(email, otp) ? 'valid' : 'invalid');
     if (result === 'expired') {
       return errorResponse(res, 400, 'E001', 'Verification code expired. Request a new code.');
     }
@@ -254,7 +254,7 @@ router.post('/login', async (req, res) => {
 
     // is_first_time_login: enable user, clear flag, then proceed to issue token
     if (user.is_first_time_login) {
-      db.prepare(`UPDATE usr_user SET enabled = 1, is_first_time_login = 0, verification_code = NULL, last_updated_date = datetime('now') WHERE id = ?`).run(user.id);
+      db.prepare(`UPDATE usr_user SET enabled = 1, is_first_time_login = 0, verification_code = NULL, last_updated_date = datetime('now', 'localtime') WHERE id = ?`).run(user.id);
     }
 
     // Spring Boot does NOT revoke existing tokens on login — just saves a new token entity
@@ -303,7 +303,7 @@ router.post('/complete-setup', async (req, res) => {
       errors.newUsername = 'Username should contain at least three characters.';
     }
     if (newPassword !== undefined && !PASSWORD_REGEX.test(newPassword)) {
-      errors.newPassword = 'Invalid password format.';
+      errors.newPassword = 'Password must be at least 6 characters.';
     }
     if (Object.keys(errors).length > 0) {
       return res.status(400).json(errors);
@@ -330,12 +330,12 @@ router.post('/complete-setup', async (req, res) => {
 
     // Spring Boot @Pattern validates newPassword against the same regex as registration
     if (!PASSWORD_REGEX.test(newPassword)) {
-      return errorResponse(res, 400, 'E001', 'Invalid password format.');
+      return errorResponse(res, 400, 'E001', 'Password must be at least 6 characters.');
     }
 
     const hashed = await bcrypt.hash(newPassword, 10);
     db.prepare(`
-      UPDATE usr_user SET user_name = ?, password = ?, must_change_password = 0, enabled = 1, last_updated_date = datetime('now') WHERE id = ?
+      UPDATE usr_user SET user_name = ?, password = ?, must_change_password = 0, enabled = 1, last_updated_date = datetime('now', 'localtime') WHERE id = ?
     `).run(newUsername.trim(), hashed, user.id);
 
     // Revoke old tokens and issue a fresh one
@@ -444,13 +444,14 @@ router.post('/forget-password-otp', (req, res) => {
 // POST /reset-password
 router.post('/reset-password', async (req, res) => {
   try {
-    const { email, verificationCode, newPassword } = req.body;
+    const { email, verificationCode } = req.body;
+    const newPassword = req.body.newPassword || req.body.password;
     if (!email || !verificationCode || !newPassword) {
       return errorResponse(res, 400, 'E002', 'Email, code and new password required');
     }
 
     if (!PASSWORD_REGEX.test(newPassword)) {
-      return errorResponse(res, 400, 'E002', 'Password does not meet requirements');
+      return errorResponse(res, 400, 'E002', 'Password must be at least 6 characters');
     }
 
     const db = getDb();

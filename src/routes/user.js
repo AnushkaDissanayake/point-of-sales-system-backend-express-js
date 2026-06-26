@@ -7,11 +7,9 @@ const { successResponse, errorResponse } = require('../utils/response');
 const { buildPaginatedQuery, paginatedResponse } = require('../utils/pagination');
 const { sendInvitationEmail } = require('../utils/email');
 const router = express.Router();
-const ALLOWED_COLUMNS = ['id', 'user_name', 'email', 'role_type', 'enabled', 'created_date'];
+const ALLOWED_COLUMNS = ['u.id', 'u.user_name', 'u.email', 'u.role_type', 'u.enabled', 'u.created_date', 'id', 'user_name', 'email', 'role_type', 'enabled', 'created_date'];
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-// Matches Spring Boot RegisterDTO @Pattern exactly
-const PASSWORD_REGEX = /^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#&()\-[\]{}:;',?/*~$^+=<>]).{8,20}$/;
 const VALID_PERMISSIONS = ['DASHBOARD', 'STORE', 'MANAGE_INVENTORY', 'EXPRESS_SALE', 'CUSTOMER', 'VENDOR', 'CART', 'REPORT', 'SETTINGS'];
 
 // GET /user-list (ADMIN only)
@@ -123,7 +121,7 @@ router.post('/edit-user', authenticate, requireAdmin, upload.single('image'), as
     }
 
     db.prepare(`
-      UPDATE user_detail SET first_name = ?, last_name = ?, mobile = ?, address = ?, nic = ?, last_updated_date = datetime('now') ${imgSql}
+      UPDATE user_detail SET first_name = ?, last_name = ?, mobile = ?, address = ?, nic = ?, last_updated_date = datetime('now', 'localtime') ${imgSql}
       WHERE user_id = ?
     `).run(firstName, lastName, mobile, address, nic, ...imgParams, userId);
 
@@ -317,7 +315,7 @@ router.post('/me/profile', authenticate, upload.single('image'), (req, res) => {
     }
 
     db.prepare(`
-      UPDATE user_detail SET first_name = ?, last_name = ?, mobile = ?, address = ?, nic = ?, last_updated_date = datetime('now') ${imgSql}
+      UPDATE user_detail SET first_name = ?, last_name = ?, mobile = ?, address = ?, nic = ?, last_updated_date = datetime('now', 'localtime') ${imgSql}
       WHERE user_id = ?
     `).run(firstName, lastName, mobile, address, nic, ...imgParams, req.user.id);
 
@@ -334,8 +332,8 @@ router.post('/me/change-password', authenticate, async (req, res) => {
     if (!currentPassword || !currentPassword.trim() || !newPassword || !newPassword.trim()) {
       return errorResponse(res, 400, 'E002', 'Current and new password are required.');
     }
-    if (newPassword.trim().length < 8) {
-      return errorResponse(res, 400, 'E001', 'New password must be at least 8 characters.');
+    if (newPassword.trim().length < 6) {
+      return errorResponse(res, 400, 'E001', 'New password must be at least 6 characters.');
     }
 
     const db = getDb();
@@ -429,8 +427,8 @@ router.put('/me/preferences', authenticate, (req, res) => {
 function upsertUserSetting(db, userId, key, value) {
   db.prepare(`
     INSERT INTO user_setting (user_id, setting_key, setting_value, last_updated_date)
-    VALUES (?, ?, ?, datetime('now'))
-    ON CONFLICT(user_id, setting_key) DO UPDATE SET setting_value = excluded.setting_value, last_updated_date = datetime('now')
+    VALUES (?, ?, ?, datetime('now', 'localtime'))
+    ON CONFLICT(user_id, setting_key) DO UPDATE SET setting_value = excluded.setting_value, last_updated_date = datetime('now', 'localtime')
   `).run(userId, key, value);
 }
 

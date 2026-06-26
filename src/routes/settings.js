@@ -86,7 +86,7 @@ router.put('/', (req, res) => {
           address = COALESCE(?, address),
           mobile = COALESCE(?, mobile),
           shop_logo = COALESCE(?, shop_logo),
-          last_updated_date = datetime('now')
+          last_updated_date = datetime('now', 'localtime')
         WHERE shop_key = ?
       `).run(
         shopName ?? null,
@@ -133,11 +133,11 @@ router.put('/', (req, res) => {
 function upsertSetting(db, shopKey, key, value, userId) {
   db.prepare(`
     INSERT INTO shop_setting (shop_key, setting_key, setting_value, last_updated_by, last_updated_date)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, datetime('now', 'localtime'))
     ON CONFLICT(shop_key, setting_key) DO UPDATE SET
       setting_value = excluded.setting_value,
       last_updated_by = excluded.last_updated_by,
-      last_updated_date = datetime('now')
+      last_updated_date = datetime('now', 'localtime')
   `).run(shopKey, key, value, userId);
 }
 

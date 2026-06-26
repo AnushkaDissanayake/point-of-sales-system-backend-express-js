@@ -86,7 +86,7 @@ router.post('/edit-customer', authenticate, upload.single('file'), (req, res) =>
 
     db.prepare(`
       UPDATE customer SET name = ?, contact_number = ?, address = ?, email = ?, description = ?,
-        updated_by = ?, last_updated_date = datetime('now')
+        updated_by = ?, last_updated_date = datetime('now', 'localtime')
       WHERE id = ?
     `).run(
       name || customer.name,

@@ -94,6 +94,8 @@ function auditMiddleware(req, res, next) {
   if (req.method === 'GET' || req.method === 'OPTIONS') return next();
 
   const originalUrl = req.originalUrl || req.url;
+  if (originalUrl.includes('/api/v1/main/validate-token')) return next();
+
   const originalJson = res.json.bind(res);
 
   res.json = function (body) {
@@ -109,7 +111,7 @@ function auditMiddleware(req, res, next) {
           INSERT INTO audit_log
             (shop_key, actor_user_id, actor_username, action, entity_type, status,
              fail_reason, http_method, request_path, client_ip, user_agent, created_date)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
         `).run(
           user?.shop_key || null,
           user?.id || null,
