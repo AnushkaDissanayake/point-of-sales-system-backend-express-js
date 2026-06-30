@@ -124,9 +124,17 @@ app.use((err, req, res, next) => {
 
 try {
   initializeDatabase();
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`POS Backend (Express.js + SQLite) running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/api/v1/health`);
+    
+    // Start local network auto-discovery services
+    try {
+      const { startDiscovery } = require('./services/networkDiscoveryService');
+      startDiscovery(PORT);
+    } catch (discoveryErr) {
+      console.error('Failed to start network discovery services:', discoveryErr);
+    }
   });
 } catch (err) {
   console.error('Failed to start server:', err);

@@ -27,8 +27,20 @@ router.get('/', authenticate, (req, res) => {
     const thresholdVal = parseFloat(settingsMap[SHOP_SETTING_KEYS.INVENTORY_LOW_STOCK_THRESHOLD]);
     const lowStockThreshold = isNaN(thresholdVal) ? 10 : thresholdVal;
 
+    const os = require('os');
+    const serverIps = [];
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          serverIps.push(iface.address);
+        }
+      }
+    }
+
     return successResponse(res, {
       status: 'SUCCESS',
+      serverIps,
       expressSale: {
         // autoPrintReceipt defaults to true — matches Spring Boot buildExpressSaleSettings(values, true)
         autoPrintReceipt: settingsMap[SHOP_SETTING_KEYS.EXPRESS_SALE_AUTO_PRINT] === undefined
