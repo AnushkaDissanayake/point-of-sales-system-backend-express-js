@@ -259,4 +259,34 @@ router.get('/item-list', authenticate, (req, res) => {
   }
 });
 
+const crypto = require('crypto');
+const tempImages = new Map();
+
+router.post('/upload-temp', authenticate, requirePermission('MANAGE_INVENTORY'), upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) {
+      return errorResponse(res, 400, 'E001', 'No file uploaded');
+    }
+    const id = crypto.randomUUID();
+    tempImages.set(id, req.file.buffer);
+    setTimeout(() => tempImages.delete(id), 10 * 60 * 1000);
+    return res.json({ imageId: id });
+  } catch (err) {
+    return errorResponse(res, 500, 'E000', err.message);
+  }
+});
+
+router.get('/temp-image/:id', authenticate, (req, res) => {
+  try {
+    const buffer = tempImages.get(req.params.id);
+    if (!buffer) {
+      return res.status(404).send('Temporary image not found or expired');
+    }
+    res.set('Content-Type', 'image/jpeg');
+    return res.send(buffer);
+  } catch (err) {
+    return res.status(500).send(err.message);
+  }
+});
+
 module.exports = router;
