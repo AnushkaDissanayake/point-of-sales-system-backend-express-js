@@ -4,9 +4,10 @@ const { authenticate } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/response');
 const { createLowStockNotification, createSaleNotification, getLowStockThreshold } = require('../services/notificationService');
 const { broadcast } = require('./events');
+const { getCustomerBalance, getEffectiveCreditLimit } = require('./ledger');
 
 const router = express.Router();
-const VALID_PAYMENT_METHODS = ['CASH', 'CARD', 'ONLINE', 'CHEQUE', 'TRANSFER'];
+const VALID_PAYMENT_METHODS = ['CASH', 'CARD', 'ONLINE', 'CHEQUE', 'TRANSFER', 'CREDIT'];
 
 router.post('/complete', authenticate, (req, res) => {
   try {
@@ -31,9 +32,8 @@ router.post('/complete', authenticate, (req, res) => {
       }
     }
 
-    // PaymentMethodUtil.normalize(): "card" → "card", everything else → "cash" — matches Spring Boot
-    const resolvedPayment = (paymentMethod && paymentMethod.trim().toLowerCase() === 'card') ? 'card' : 'cash';
-    // Default amountPaid to grandTotal when not provided — matches Spring Boot ExpressSaleService
+    const pm = (paymentMethod || '').trim().toLowerCase();
+    const resolvedPayment = pm === 'card' ? 'card' : pm === 'credit' ? 'credit' : 'cash';
     const resolvedAmountPaid = amountPaid !== undefined && amountPaid !== null ? parseFloat(amountPaid) : null;
 
     const db = getDb();
@@ -68,12 +68,10 @@ router.post('/complete', authenticate, (req, res) => {
         custId = r.lastInsertRowid;
       }
 
-      const custResult = { lastInsertRowid: custId };
-
       const cartResult = db.prepare(`
         INSERT INTO cart (customer_id, shop_id, shop_key, created_by, updated_by, sold_by, status, payment_method)
         VALUES (?, ?, ?, ?, ?, ?, 0, ?)
-      `).run(custResult.lastInsertRowid, shop?.id || null, req.user.shop_key, req.user.id, req.user.id, req.user.id, resolvedPayment);
+      `).run(custId, shop?.id || null, req.user.shop_key, req.user.id, req.user.id, req.user.id, resolvedPayment);
 
       const cartId = cartResult.lastInsertRowid;
       let total = 0;
@@ -103,15 +101,38 @@ router.post('/complete', authenticate, (req, res) => {
         total += Math.max(0, (soldPrice * qty) - discount);
       }
 
-      // amountPaid defaults to grandTotal when not provided — matches Spring Boot
       const grandTotalRounded = Math.round(total * 100) / 100;
-      const finalAmountPaid = resolvedAmountPaid !== null ? resolvedAmountPaid : grandTotalRounded;
-      if (finalAmountPaid < grandTotalRounded) {
+      const finalAmountPaid = resolvedAmountPaid !== null ? resolvedAmountPaid : (resolvedPayment === 'credit' ? 0 : grandTotalRounded);
+
+      if (resolvedPayment !== 'credit' && finalAmountPaid < grandTotalRounded) {
         throw new Error('UNDERPAID:Amount paid is less than total');
+      }
+
+      // Credit limit check
+      if (resolvedPayment === 'credit') {
+        const outstanding = Math.max(0, Math.round((grandTotalRounded - finalAmountPaid) * 100) / 100);
+        if (outstanding > 0) {
+          const { limit } = getEffectiveCreditLimit(db, custId, req.user.shop_key);
+          const currentBalance = getCustomerBalance(db, custId, req.user.shop_key);
+          if (currentBalance.outstandingBalance + outstanding > limit) {
+            throw new Error(`CREDIT_LIMIT:Credit limit of ${limit} would be exceeded. Current balance: ${currentBalance.outstandingBalance}, New charge: ${outstanding}`);
+          }
+        }
       }
 
       // Mark cart completed, update amount_paid
       db.prepare(`UPDATE cart SET status = 1, amount_paid = ?, last_updated_date = datetime('now', 'localtime') WHERE id = ?`).run(finalAmountPaid, cartId);
+
+      // Create ledger DEBIT entry for credit sales
+      if (resolvedPayment === 'credit') {
+        const outstanding = Math.max(0, Math.round((grandTotalRounded - finalAmountPaid) * 100) / 100);
+        if (outstanding > 0) {
+          db.prepare(`
+            INSERT INTO customer_ledger (customer_id, shop_key, entry_type, amount, reference_type, reference_id, notes, created_by)
+            VALUES (?, ?, 'DEBIT', ?, 'CART', ?, 'Credit express sale', ?)
+          `).run(custId, req.user.shop_key, outstanding, cartId, req.user.id);
+        }
+      }
 
       return { cartId, total, finalAmountPaid };
     });
@@ -120,17 +141,17 @@ router.post('/complete', authenticate, (req, res) => {
     createSaleNotification(req.user.shop_key, req.user.id, cartId, total);
     broadcast(req.user.shop_key, 'STOCK_UPDATE', { cartId, event: 'EXPRESS_SALE' });
 
-    // Returns ExpressSaleResponseDTO matching Spring Boot: cartId, grandTotal, changeDue
     const grandTotal = Math.round(total * 100) / 100;
     const changeDue = Math.round((finalAmountPaid - grandTotal) * 100) / 100;
 
-    // ExpressSaleResponseDTO matches Spring Boot exactly: { status, message, cartId, grandTotal, changeDue }
     return successResponse(res, { cartId, grandTotal, changeDue }, 'Sale completed successfully');
   } catch (err) {
     if (err.message.startsWith('UNDERPAID:')) {
       return errorResponse(res, 400, 'E001', err.message.replace('UNDERPAID:', ''));
     }
-    // Spring Boot uses 409 CONFLICT for insufficient stock
+    if (err.message.startsWith('CREDIT_LIMIT:')) {
+      return errorResponse(res, 400, 'E001', err.message.replace('CREDIT_LIMIT:', ''));
+    }
     if (err.message.includes('Insufficient stock')) {
       return res.status(409).json({ errorCode: 'E001', failReason: err.message });
     }
@@ -140,5 +161,6 @@ router.post('/complete', authenticate, (req, res) => {
     return errorResponse(res, 500, 'E000', err.message);
   }
 });
+
 
 module.exports = router;

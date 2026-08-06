@@ -12,7 +12,13 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 // Maps to Spring Boot CustomerDTO exactly: {id, name, contact, email}
 function toCustomerDTO(row) {
   if (!row) return null;
-  return { id: row.id, name: row.name, contact: row.contact_number, email: row.email };
+  return {
+    id: row.id,
+    name: row.name,
+    contact: row.contact_number,
+    email: row.email,
+    creditLimit: row.credit_limit !== undefined ? row.credit_limit : null
+  };
 }
 
 // Parses from JSON body or multipart "customer" param (matches Spring Boot @RequestParam("customer"))
@@ -33,6 +39,7 @@ router.post('/add-customer', authenticate, upload.single('file'), (req, res) => 
     const address = data.address;
     const email = data.email;
     const description = data.description;
+    const creditLimit = data.creditLimit !== undefined && data.creditLimit !== null ? parseFloat(data.creditLimit) : null;
     if (!name || !name.trim()) return errorResponse(res, 400, 'E001', 'Invalid customer name');
 
     const db = getDb();
@@ -46,9 +53,10 @@ router.post('/add-customer', authenticate, upload.single('file'), (req, res) => 
 
     const shop = db.prepare('SELECT id FROM shop_detail WHERE shop_key = ?').get(req.user.shop_key);
     const result = db.prepare(`
-      INSERT INTO customer (name, contact_number, address, email, description, shop_id, shop_key, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO customer (name, contact_number, address, email, description, credit_limit, shop_id, shop_key, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(name, contactNumber || null, address || null, email || null, description || null,
+        (creditLimit !== null && !isNaN(creditLimit)) ? creditLimit : null,
         shop?.id || null, req.user.shop_key, req.user.id);
 
     if (req.file) {
@@ -71,6 +79,7 @@ router.post('/edit-customer', authenticate, upload.single('file'), (req, res) =>
     const address = data.address;
     const email = data.email;
     const description = data.description;
+    const creditLimit = data.creditLimit !== undefined ? (data.creditLimit !== null ? parseFloat(data.creditLimit) : null) : undefined;
     if (!id) return errorResponse(res, 400, 'E002', 'Customer id required');
 
     const db = getDb();
@@ -86,7 +95,7 @@ router.post('/edit-customer', authenticate, upload.single('file'), (req, res) =>
 
     db.prepare(`
       UPDATE customer SET name = ?, contact_number = ?, address = ?, email = ?, description = ?,
-        updated_by = ?, last_updated_date = datetime('now', 'localtime')
+        credit_limit = ?, updated_by = ?, last_updated_date = datetime('now', 'localtime')
       WHERE id = ?
     `).run(
       name || customer.name,
@@ -94,6 +103,7 @@ router.post('/edit-customer', authenticate, upload.single('file'), (req, res) =>
       address !== undefined ? address : customer.address,
       email !== undefined ? email : customer.email,
       description !== undefined ? description : customer.description,
+      creditLimit !== undefined ? ((!isNaN(creditLimit) && creditLimit !== null) ? creditLimit : null) : customer.credit_limit,
       req.user.id, id
     );
 

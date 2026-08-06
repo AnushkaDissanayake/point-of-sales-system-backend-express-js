@@ -5,6 +5,7 @@ const { successResponse, errorResponse } = require('../utils/response');
 const { buildPaginatedQuery, paginatedResponse } = require('../utils/pagination');
 const { createLowStockNotification, createSaleNotification, getLowStockThreshold } = require('../services/notificationService');
 const { broadcast } = require('./events');
+const { getCustomerBalance, getEffectiveCreditLimit } = require('./ledger');
 
 const router = express.Router();
 const ALLOWED_COLUMNS = ['c.id', 'c.status', 'c.payment_method', 'c.created_date', 'c.last_updated_date', 'c.amount_paid', 'id', 'status', 'payment_method', 'created_date', 'last_updated_date', 'amount_paid'];
@@ -388,8 +389,8 @@ router.post('/complete-cart', authenticate, (req, res) => {
     const { cartId, paymentMethod, amountPaid } = req.body;
     if (!cartId) return errorResponse(res, 400, 'E002', 'Cart id is required');
 
-    // PaymentMethodUtil.normalize(): "card" → "card", everything else → "cash" — matches Spring Boot
-    const resolvedPayment = (paymentMethod && paymentMethod.trim().toLowerCase() === 'card') ? 'card' : 'cash';
+    const pm = (paymentMethod || '').trim().toLowerCase();
+    const resolvedPayment = pm === 'card' ? 'card' : pm === 'credit' ? 'credit' : 'cash';
 
     const db = getDb();
     const cart = db.prepare('SELECT * FROM cart WHERE id = ? AND shop_key = ?').get(cartId, req.user.shop_key);
@@ -406,17 +407,30 @@ router.post('/complete-cart', authenticate, (req, res) => {
 
       if (cartItems.length === 0) throw new Error('Cart is empty');
 
-      // Validate quantities > 0
       for (const ci of cartItems) {
         if (ci.quantity <= 0) throw new Error('Quantity must be greater than zero');
         total += Math.max(0, ci.sold_price * ci.quantity - (ci.discount || 0));
       }
 
-      // Validate amountPaid >= grandTotal before touching stock
       const grandTotalPreview = Math.round(total * 100) / 100;
       const paidAmt = amountPaid !== undefined && amountPaid !== null ? parseFloat(amountPaid) : grandTotalPreview;
-      if (paidAmt < grandTotalPreview) {
+
+      // For credit payment: allow underpayment but check credit limit
+      if (resolvedPayment !== 'credit' && paidAmt < grandTotalPreview) {
         throw new Error('UNDERPAID:Amount paid is less than total');
+      }
+
+      // Credit limit check
+      if (resolvedPayment === 'credit') {
+        const cart = db.prepare('SELECT customer_id FROM cart WHERE id = ?').get(cartId);
+        if (cart && cart.customer_id) {
+          const outstanding = Math.max(0, grandTotalPreview - paidAmt);
+          const { limit } = getEffectiveCreditLimit(db, cart.customer_id, req.user.shop_key);
+          const currentBalance = getCustomerBalance(db, cart.customer_id, req.user.shop_key);
+          if (currentBalance.outstandingBalance + outstanding > limit) {
+            throw new Error(`CREDIT_LIMIT:Credit limit of ${limit} would be exceeded. Current balance: ${currentBalance.outstandingBalance}, New charge: ${outstanding}`);
+          }
+        }
       }
 
       const threshold = getLowStockThreshold(db, req.user.shop_key);
@@ -437,6 +451,20 @@ router.post('/complete-cart', authenticate, (req, res) => {
         WHERE id = ?
       `).run(resolvedPayment, paidAmt, req.user.id, req.user.id, cartId);
 
+      // Create ledger DEBIT entry for credit sales
+      if (resolvedPayment === 'credit') {
+        const cart = db.prepare('SELECT customer_id FROM cart WHERE id = ?').get(cartId);
+        if (cart && cart.customer_id) {
+          const outstanding = Math.max(0, Math.round((grandTotalPreview - paidAmt) * 100) / 100);
+          if (outstanding > 0) {
+            db.prepare(`
+              INSERT INTO customer_ledger (customer_id, shop_key, entry_type, amount, reference_type, reference_id, notes, created_by)
+              VALUES (?, ?, 'DEBIT', ?, 'CART', ?, 'Credit sale', ?)
+            `).run(cart.customer_id, req.user.shop_key, outstanding, cartId, req.user.id);
+          }
+        }
+      }
+
       return { total, paidAmt };
     });
 
@@ -455,8 +483,11 @@ router.post('/complete-cart', authenticate, (req, res) => {
       cartId: parseInt(cartId),
       grandTotal,
       changeDue
-    }, 'Cart completed successfully');
+      }, 'Cart completed successfully');
   } catch (err) {
+    if (err.message.startsWith('CREDIT_LIMIT:')) {
+      return errorResponse(res, 400, 'E001', err.message.replace('CREDIT_LIMIT:', ''));
+    }
     if (err.message.startsWith('UNDERPAID:')) {
       return errorResponse(res, 400, 'E001', err.message.replace('UNDERPAID:', ''));
     }

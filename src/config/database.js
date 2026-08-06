@@ -293,6 +293,44 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_notification_shop ON notification(shop_key, status);
   `);
 
+  // Ledger: add customer_ledger table if not exists
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS customer_ledger (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id     INTEGER NOT NULL,
+      shop_key        TEXT NOT NULL,
+      entry_type      TEXT NOT NULL,
+      amount          REAL NOT NULL,
+      reference_type  TEXT,
+      reference_id    INTEGER,
+      notes           TEXT,
+      created_by      INTEGER,
+      created_date    TEXT DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (customer_id) REFERENCES customer(id),
+      FOREIGN KEY (shop_key) REFERENCES shop_detail(shop_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ledger_customer ON customer_ledger(customer_id, shop_key, created_date);
+  `);
+
+  // Ledger: add credit_limit column to customer if missing
+  const customerCols = db.prepare("PRAGMA table_info(customer)").all();
+  if (!customerCols.some(c => c.name === 'credit_limit')) {
+    db.exec('ALTER TABLE customer ADD COLUMN credit_limit REAL DEFAULT NULL');
+  }
+
+  // Ledger: seed DEFAULT_CREDIT_LIMIT shop setting for all existing shops
+  const shops = db.prepare('SELECT shop_key FROM shop_detail').all();
+  const settingInsert = db.prepare(`
+    INSERT OR IGNORE INTO shop_setting (shop_key, setting_key, setting_value)
+    VALUES (?, 'DEFAULT_CREDIT_LIMIT', '100000')
+  `);
+  for (const shop of shops) {
+    settingInsert.run(shop.shop_key);
+  }
+  // Upgrade old 5000 default setting to 100000
+  db.exec("UPDATE shop_setting SET setting_value = '100000' WHERE setting_key = 'DEFAULT_CREDIT_LIMIT' AND setting_value = '5000'");
+
+
   console.log('Database initialized successfully');
 }
 

@@ -247,6 +247,37 @@ router.get('/', authenticate, requirePermission('DASHBOARD'), (req, res) => {
       AND c.customer_id IS NOT NULL
     `).get(shopKey, start, end).cnt;
 
+    // Ledger summary — total outstanding balance and number of debtors
+    const ledgerSummary = db.prepare(`
+      SELECT
+        COUNT(DISTINCT cl.customer_id) as debtor_count,
+        COALESCE(SUM(CASE WHEN cl.entry_type = 'DEBIT' THEN cl.amount ELSE 0 END), 0) as total_debit,
+        COALESCE(SUM(CASE WHEN cl.entry_type = 'CREDIT' THEN cl.amount ELSE 0 END), 0) as total_credit
+      FROM customer_ledger cl
+      JOIN (
+        SELECT customer_id,
+          SUM(CASE WHEN entry_type = 'DEBIT' THEN amount ELSE 0 END) -
+          SUM(CASE WHEN entry_type = 'CREDIT' THEN amount ELSE 0 END) AS outstanding
+        FROM customer_ledger WHERE shop_key = ?
+        GROUP BY customer_id
+        HAVING outstanding > 0.001
+      ) d ON cl.customer_id = d.customer_id
+      WHERE cl.shop_key = ?
+    `).get(shopKey, shopKey);
+
+    const totalOutstanding = Math.round((ledgerSummary.total_debit - ledgerSummary.total_credit) * 100) / 100;
+
+    // Credit sales created in this period
+    const creditSalesInPeriod = db.prepare(`
+      SELECT
+        COUNT(*) as credit_orders,
+        COALESCE(SUM(cl.amount), 0) as credit_revenue
+      FROM customer_ledger cl
+      WHERE cl.shop_key = ? AND cl.entry_type = 'DEBIT'
+      AND cl.reference_type = 'CART'
+      AND cl.created_date >= ? AND cl.created_date < ?
+    `).get(shopKey, start, end);
+
     const calcChange = (current, prev) => {
       if (!prev || prev === 0) return current > 0 ? 100 : 0;
       return parseFloat(((current - prev) / prev * 100).toFixed(1));
@@ -292,7 +323,14 @@ router.get('/', authenticate, requirePermission('DASHBOARD'), (req, res) => {
       // DashboardLowStockDTO: { code, name, stock } — field name "lowStock" not "lowStockItems"
       lowStock: lowStockItems.map(i => ({ code: i.item_code, name: i.name, stock: i.quantity })),
       openCarts,
-      activeCustomers
+      activeCustomers,
+      // Ledger summary data
+      ledger: {
+        totalOutstanding,
+        debtorCount: ledgerSummary.debtor_count,
+        creditOrdersInPeriod: creditSalesInPeriod.credit_orders,
+        creditRevenueInPeriod: Math.round(creditSalesInPeriod.credit_revenue * 100) / 100
+      }
     });
   } catch (err) {
     return errorResponse(res, 500, 'E000', err.message);

@@ -21,6 +21,7 @@ const settingsRoutes = require('./routes/settings');
 const auditRoutes = require('./routes/audit');
 const notificationRoutes = require('./routes/notifications');
 const subscriptionRoutes = require('./routes/subscription');
+const ledgerRoutes = require('./routes/ledger');
 const mainRoutes = require('./routes/main');
 const { router: eventsRouter } = require('./routes/events');
 
@@ -99,6 +100,7 @@ app.use('/api/v1/report',       authenticate, enforceSubscription, reportRoutes)
 app.use('/api/v1/settings',     authenticate, enforceSubscription, settingsRoutes);
 app.use('/api/v1/audit',        authenticate, enforceSubscription, auditRoutes);
 app.use('/api/v1/notifications',authenticate, enforceSubscription, notificationRoutes);
+app.use('/api/v1/ledger',       authenticate, enforceSubscription, ledgerRoutes);
 
 // SPA fallback — serve index.html for any non-API GET request so React Router works
 app.get('*', (req, res, next) => {

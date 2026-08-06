@@ -56,6 +56,11 @@ router.get('/', authenticate, (req, res) => {
       },
       inventory: {
         lowStockThreshold
+      },
+      ledger: {
+        defaultCreditLimit: !isNaN(parseFloat(settingsMap['DEFAULT_CREDIT_LIMIT']))
+          ? parseFloat(settingsMap['DEFAULT_CREDIT_LIMIT'])
+          : 100000
       }
     });
   } catch (err) {
@@ -67,9 +72,10 @@ router.get('/', authenticate, (req, res) => {
 router.put('/', (req, res) => {
   try {
     const db = getDb();
-    const { expressSale, business, inventory } = req.body;
+    const { expressSale, business, inventory, ledger } = req.body;
 
     // Business profile — ADMIN only; non-admin sending business block gets 403
+
     if (business && req.user.role_type !== 'ADMIN') {
       return errorResponse(res, 403, 'E001', 'Only admin can update business settings');
     }
@@ -132,6 +138,17 @@ router.put('/', (req, res) => {
         const threshold = parseFloat(lowStockThreshold);
         if (!isNaN(threshold)) {
           upsertSetting(db, req.user.shop_key, SHOP_SETTING_KEYS.INVENTORY_LOW_STOCK_THRESHOLD, String(threshold), req.user.id);
+        }
+      }
+    }
+
+    // Ledger settings
+    if (ledger) {
+      const { defaultCreditLimit } = ledger;
+      if (defaultCreditLimit !== undefined) {
+        const limit = parseFloat(defaultCreditLimit);
+        if (!isNaN(limit) && limit >= 0) {
+          upsertSetting(db, req.user.shop_key, 'DEFAULT_CREDIT_LIMIT', String(limit), req.user.id);
         }
       }
     }
