@@ -370,10 +370,13 @@ router.get('/me/image', authenticate, (req, res) => {
 
 const VALID_COLOR_THEMES = ['green', 'ocean', 'sunset', 'violet', 'teal', 'midnight', 'ember'];
 const VALID_THEME_MODES = ['light', 'dark'];
+const VALID_DISPLAY_THEMES = ['classic', 'neo'];
 const DEFAULT_COLOR_THEME = 'green';
+const DEFAULT_DISPLAY_THEME = 'classic';
 // Matches Spring Boot UserSettingKeys exactly
 const KEY_COLOR_THEME = 'appearance.color_theme';
 const KEY_THEME_MODE = 'appearance.theme_mode';
+const KEY_DISPLAY_THEME = 'appearance.display_theme';
 
 // GET /me/preferences — returns structured AppearanceSettingsDTO
 router.get('/me/preferences', authenticate, (req, res) => {
@@ -382,21 +385,22 @@ router.get('/me/preferences', authenticate, (req, res) => {
     const settings = db.prepare('SELECT setting_key, setting_value FROM user_setting WHERE user_id = ?').all(req.user.id);
     const map = {};
     settings.forEach(s => { map[s.setting_key] = s.setting_value; });
-    // UserPreferencesDTO { status, colorTheme, themeMode } — matches Spring Boot
+    // UserPreferencesDTO { status, colorTheme, themeMode, displayTheme } — matches Spring Boot
     return successResponse(res, {
       status: 'SUCCESS',
       colorTheme: map[KEY_COLOR_THEME] || DEFAULT_COLOR_THEME,
-      themeMode: map[KEY_THEME_MODE] || 'light'
+      themeMode: map[KEY_THEME_MODE] || 'light',
+      displayTheme: map[KEY_DISPLAY_THEME] || DEFAULT_DISPLAY_THEME
     });
   } catch (err) {
     return errorResponse(res, 500, 'E000', err.message);
   }
 });
 
-// PUT /me/preferences — accepts UpdateUserPreferencesRequestDTO { colorTheme, themeMode }
+// PUT /me/preferences — accepts UpdateUserPreferencesRequestDTO { colorTheme, themeMode, displayTheme }
 router.put('/me/preferences', authenticate, (req, res) => {
   try {
-    const { colorTheme, themeMode } = req.body;
+    const { colorTheme, themeMode, displayTheme } = req.body;
     const db = getDb();
 
     if (colorTheme !== undefined) {
@@ -415,6 +419,14 @@ router.put('/me/preferences', authenticate, (req, res) => {
         return errorResponse(res, 400, 'E001', 'Invalid theme mode');
       }
       upsertUserSetting(db, req.user.id, KEY_THEME_MODE, normalizedMode);
+    }
+
+    if (displayTheme !== undefined) {
+      const normalizedDisplay = displayTheme.trim().toLowerCase();
+      if (!VALID_DISPLAY_THEMES.includes(normalizedDisplay)) {
+        return errorResponse(res, 400, 'E001', 'Invalid display theme');
+      }
+      upsertUserSetting(db, req.user.id, KEY_DISPLAY_THEME, normalizedDisplay);
     }
 
     // Spring Boot UserPreferencesService.updatePreferences returns SuccessResponseDTO
