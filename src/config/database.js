@@ -318,6 +318,18 @@ function initializeDatabase() {
     db.exec('ALTER TABLE customer ADD COLUMN credit_limit REAL DEFAULT NULL');
   }
 
+  // Business profile: second phone number (address + first mobile already existed)
+  const shopDetailCols = db.prepare("PRAGMA table_info(shop_detail)").all();
+  if (!shopDetailCols.some(c => c.name === 'mobile2')) {
+    db.exec('ALTER TABLE shop_detail ADD COLUMN mobile2 TEXT');
+  }
+
+  // Bank transfer reference/note, captured when a sale is completed with payment_method = 'transfer'
+  const cartCols = db.prepare("PRAGMA table_info(cart)").all();
+  if (!cartCols.some(c => c.name === 'payment_reference')) {
+    db.exec('ALTER TABLE cart ADD COLUMN payment_reference TEXT');
+  }
+
   // Ledger: seed DEFAULT_CREDIT_LIMIT shop setting for all existing shops
   const shops = db.prepare('SELECT shop_key FROM shop_detail').all();
   const settingInsert = db.prepare(`
@@ -330,6 +342,30 @@ function initializeDatabase() {
   // Upgrade old 5000 default setting to 100000
   db.exec("UPDATE shop_setting SET setting_value = '100000' WHERE setting_key = 'DEFAULT_CREDIT_LIMIT' AND setting_value = '5000'");
 
+  // Vendor Ledger: add vendor_ledger table if not exists
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vendor_ledger (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      vendor_id       INTEGER NOT NULL,
+      shop_key        TEXT NOT NULL,
+      entry_type      TEXT NOT NULL,
+      amount          REAL NOT NULL,
+      reference_type  TEXT,
+      reference_id    INTEGER,
+      notes           TEXT,
+      due_date        TEXT,
+      created_by      INTEGER,
+      created_date    TEXT DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (vendor_id) REFERENCES vendor(id),
+      FOREIGN KEY (shop_key)  REFERENCES shop_detail(shop_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_vendor_ledger_vendor ON vendor_ledger(vendor_id, shop_key, created_date);
+  `);
+
+  const vlCols = db.prepare("PRAGMA table_info(vendor_ledger)").all();
+  if (!vlCols.some(c => c.name === 'due_date')) {
+    db.exec('ALTER TABLE vendor_ledger ADD COLUMN due_date TEXT DEFAULT NULL');
+  }
 
   console.log('Database initialized successfully');
 }

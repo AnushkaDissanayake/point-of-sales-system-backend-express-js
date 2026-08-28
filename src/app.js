@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { initializeDatabase } = require('./config/database');
+const { initializeDatabase, getDb } = require('./config/database');
 const { authenticate } = require('./middleware/auth');
 const { enforceSubscription } = require('./middleware/subscription');
 const { auditMiddleware } = require('./middleware/auditLog');
@@ -22,6 +22,7 @@ const auditRoutes = require('./routes/audit');
 const notificationRoutes = require('./routes/notifications');
 const subscriptionRoutes = require('./routes/subscription');
 const ledgerRoutes = require('./routes/ledger');
+const vendorLedgerRoutes = require('./routes/vendor-ledger');
 const mainRoutes = require('./routes/main');
 const { router: eventsRouter } = require('./routes/events');
 
@@ -101,6 +102,7 @@ app.use('/api/v1/settings',     authenticate, enforceSubscription, settingsRoute
 app.use('/api/v1/audit',        authenticate, enforceSubscription, auditRoutes);
 app.use('/api/v1/notifications',authenticate, enforceSubscription, notificationRoutes);
 app.use('/api/v1/ledger',       authenticate, enforceSubscription, ledgerRoutes);
+app.use('/api/v1/vendor-ledger', authenticate, enforceSubscription, vendorLedgerRoutes);
 
 // SPA fallback — serve index.html for any non-API GET request so React Router works
 app.get('*', (req, res, next) => {
@@ -129,7 +131,7 @@ try {
   const server = app.listen(PORT, () => {
     console.log(`POS Backend (Express.js + SQLite) running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/api/v1/health`);
-    
+
     // Start local network auto-discovery services
     try {
       const { startDiscovery } = require('./services/networkDiscoveryService');
@@ -138,6 +140,30 @@ try {
       console.error('Failed to start network discovery services:', discoveryErr);
     }
   });
+
+  // Graceful shutdown — checkpoint and close the WAL-mode SQLite connection
+  // cleanly whenever the Windows service is stopped (upgrades, restores,
+  // reboots). SQLite is durable either way, but this avoids leaving
+  // uncheckpointed data sitting only in the -wal file.
+  let shuttingDown = false;
+  const gracefulShutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`Received ${signal}, shutting down gracefully...`);
+    server.close(() => {
+      try {
+        getDb().close();
+        console.log('Database closed cleanly.');
+      } catch (closeErr) {
+        console.error('Error closing database:', closeErr.message);
+      }
+      process.exit(0);
+    });
+    // Force-exit if close() hangs (e.g. a request never finishes)
+    setTimeout(() => process.exit(0), 10000).unref();
+  };
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 } catch (err) {
   console.error('Failed to start server:', err);
   process.exit(1);

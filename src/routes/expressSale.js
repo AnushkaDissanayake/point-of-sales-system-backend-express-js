@@ -11,7 +11,7 @@ const VALID_PAYMENT_METHODS = ['CASH', 'CARD', 'ONLINE', 'CHEQUE', 'TRANSFER', '
 
 router.post('/complete', authenticate, (req, res) => {
   try {
-    const { customerName, customerContact, notes, amountPaid, paymentMethod, lines } = req.body;
+    const { customerName, customerContact, notes, amountPaid, paymentMethod, paymentReference, lines } = req.body;
 
     if (!lines || !Array.isArray(lines) || lines.length === 0) {
       return errorResponse(res, 400, 'E002', 'Cart is empty');
@@ -33,8 +33,11 @@ router.post('/complete', authenticate, (req, res) => {
     }
 
     const pm = (paymentMethod || '').trim().toLowerCase();
-    const resolvedPayment = pm === 'card' ? 'card' : pm === 'credit' ? 'credit' : 'cash';
+    const resolvedPayment = pm === 'card' ? 'card' : pm === 'credit' ? 'credit' : pm === 'transfer' ? 'transfer' : 'cash';
     const resolvedAmountPaid = amountPaid !== undefined && amountPaid !== null ? parseFloat(amountPaid) : null;
+    const resolvedReference = resolvedPayment === 'transfer' && paymentReference
+      ? String(paymentReference).trim().slice(0, 100)
+      : null;
 
     const db = getDb();
     const shop = db.prepare('SELECT id FROM shop_detail WHERE shop_key = ?').get(req.user.shop_key);
@@ -69,9 +72,9 @@ router.post('/complete', authenticate, (req, res) => {
       }
 
       const cartResult = db.prepare(`
-        INSERT INTO cart (customer_id, shop_id, shop_key, created_by, updated_by, sold_by, status, payment_method)
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
-      `).run(custId, shop?.id || null, req.user.shop_key, req.user.id, req.user.id, req.user.id, resolvedPayment);
+        INSERT INTO cart (customer_id, shop_id, shop_key, created_by, updated_by, sold_by, status, payment_method, payment_reference)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+      `).run(custId, shop?.id || null, req.user.shop_key, req.user.id, req.user.id, req.user.id, resolvedPayment, resolvedReference);
 
       const cartId = cartResult.lastInsertRowid;
       let total = 0;

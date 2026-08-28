@@ -386,11 +386,14 @@ router.post('/update-cart', authenticate, (req, res) => {
 
 router.post('/complete-cart', authenticate, (req, res) => {
   try {
-    const { cartId, paymentMethod, amountPaid } = req.body;
+    const { cartId, paymentMethod, amountPaid, paymentReference } = req.body;
     if (!cartId) return errorResponse(res, 400, 'E002', 'Cart id is required');
 
     const pm = (paymentMethod || '').trim().toLowerCase();
-    const resolvedPayment = pm === 'card' ? 'card' : pm === 'credit' ? 'credit' : 'cash';
+    const resolvedPayment = pm === 'card' ? 'card' : pm === 'credit' ? 'credit' : pm === 'transfer' ? 'transfer' : 'cash';
+    const resolvedReference = resolvedPayment === 'transfer' && paymentReference
+      ? String(paymentReference).trim().slice(0, 100)
+      : null;
 
     const db = getDb();
     const cart = db.prepare('SELECT * FROM cart WHERE id = ? AND shop_key = ?').get(cartId, req.user.shop_key);
@@ -447,9 +450,9 @@ router.post('/complete-cart', authenticate, (req, res) => {
       }
 
       db.prepare(`
-        UPDATE cart SET status = 1, payment_method = ?, amount_paid = ?, sold_by = ?, updated_by = ?, last_updated_date = datetime('now', 'localtime')
+        UPDATE cart SET status = 1, payment_method = ?, payment_reference = ?, amount_paid = ?, sold_by = ?, updated_by = ?, last_updated_date = datetime('now', 'localtime')
         WHERE id = ?
-      `).run(resolvedPayment, paidAmt, req.user.id, req.user.id, cartId);
+      `).run(resolvedPayment, resolvedReference, paidAmt, req.user.id, req.user.id, cartId);
 
       // Create ledger DEBIT entry for credit sales
       if (resolvedPayment === 'credit') {
