@@ -19,33 +19,45 @@ function buildPaginatedQuery(baseQuery, countQuery, params, page, size, sorting,
 
   if (filterColumn && operator && filterValue !== undefined && filterValue !== '') {
     const sqlOp = validOperators[operator] || (operator.toUpperCase() === 'LIKE' ? 'LIKE' : null);
-    let safeColumn = allowedColumns && allowedColumns.includes(filterColumn) ? filterColumn : null;
-    if (safeColumn && !safeColumn.includes('.')) {
-      const prefixed = allowedColumns.find(c => c.endsWith(`.${safeColumn}`));
-      if (prefixed) {
-        safeColumn = prefixed;
-      }
-    }
 
-    if (sqlOp && safeColumn) {
-      let val = filterValue;
-      if (operator === 'CONTAINS' || operator.toLowerCase() === 'like') {
-        val = `%${filterValue}%`;
-      } else if (operator === 'STARTS_WITH') {
-        val = `${filterValue}%`;
-      } else if (operator === 'ENDS_WITH') {
-        val = `%${filterValue}`;
-      }
+    if (sqlOp) {
+      // Multi-column OR search: filterColumn = "name~@item_code" searches name OR item_code.
+      // filterValue may be a single term shared by every column, or the same "~"-joined shape
+      // (one value per column) mirroring how filterColumn was built on the client.
+      const columnParts = String(filterColumn).split('~').map(p => p.trim()).filter(Boolean);
+      const rawValueParts = String(filterValue).split('~');
+      const valueParts = rawValueParts.length === columnParts.length ? rawValueParts : columnParts.map(() => filterValue);
 
-      const isIdCol = safeColumn.endsWith('_id') || safeColumn === 'id' || safeColumn.endsWith('.id');
-      if (isIdCol) {
-        whereClause = ` AND ${safeColumn} = ?`;
-        val = parseInt(String(val).replace(/%/g, '')) || 0;
-      } else {
-        whereClause = ` AND LOWER(${safeColumn}) ${sqlOp} ?`;
-        val = String(val).toLowerCase();
+      const resolvedPairs = columnParts.map((part, idx) => {
+        const raw = part.startsWith('@') ? part.substring(1) : part;
+        let safeColumn = allowedColumns && allowedColumns.includes(raw) ? raw : null;
+        if (safeColumn && !safeColumn.includes('.')) {
+          const prefixed = allowedColumns.find(c => c.endsWith(`.${safeColumn}`));
+          if (prefixed) safeColumn = prefixed;
+        }
+        return safeColumn ? { column: safeColumn, value: valueParts[idx] } : null;
+      }).filter(Boolean);
+
+      if (resolvedPairs.length > 0) {
+        const clauses = resolvedPairs.map(({ column, value }) => {
+          const isIdCol = column.endsWith('_id') || column === 'id' || column.endsWith('.id');
+          if (isIdCol) {
+            filterParams.push(parseInt(String(value).replace(/%/g, '')) || 0);
+            return `${column} = ?`;
+          }
+          let val = value;
+          if (operator === 'CONTAINS' || operator.toLowerCase() === 'like') {
+            val = `%${value}%`;
+          } else if (operator === 'STARTS_WITH') {
+            val = `${value}%`;
+          } else if (operator === 'ENDS_WITH') {
+            val = `%${value}`;
+          }
+          filterParams.push(String(val).toLowerCase());
+          return `LOWER(${column}) ${sqlOp} ?`;
+        });
+        whereClause = resolvedPairs.length > 1 ? ` AND (${clauses.join(' OR ')})` : ` AND ${clauses[0]}`;
       }
-      filterParams = [val];
     }
   }
 
@@ -86,4 +98,19 @@ function paginatedResponse(items, total, page, size) {
   };
 }
 
-module.exports = { buildPaginatedQuery, paginatedResponse };
+// Rewrites friendly/DTO-facing column names in a (possibly multi-column,
+// "~"-joined) filterColumn to their real underlying table column, e.g.
+// "contact" -> "contact_number", "name~@contact" -> "name~@contact_number".
+// Route handlers use this so clients can keep filtering by the same field
+// names the response DTO exposes, without those aliases needing to be
+// treated as real, filterable table columns everywhere else.
+function aliasFilterColumn(filterColumn, aliasMap) {
+  if (!filterColumn) return filterColumn;
+  return String(filterColumn).split('~').map(part => {
+    const prefix = part.startsWith('@') ? '@' : '';
+    const name = prefix ? part.slice(1) : part;
+    return prefix + (aliasMap[name] || name);
+  }).join('~');
+}
+
+module.exports = { buildPaginatedQuery, paginatedResponse, aliasFilterColumn };

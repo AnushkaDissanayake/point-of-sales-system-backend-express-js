@@ -24,6 +24,7 @@ const subscriptionRoutes = require('./routes/subscription');
 const ledgerRoutes = require('./routes/ledger');
 const vendorLedgerRoutes = require('./routes/vendor-ledger');
 const mainRoutes = require('./routes/main');
+const printJobRoutes = require('./routes/printJobs');
 const { router: eventsRouter } = require('./routes/events');
 
 const app = express();
@@ -103,6 +104,7 @@ app.use('/api/v1/audit',        authenticate, enforceSubscription, auditRoutes);
 app.use('/api/v1/notifications',authenticate, enforceSubscription, notificationRoutes);
 app.use('/api/v1/ledger',       authenticate, enforceSubscription, ledgerRoutes);
 app.use('/api/v1/vendor-ledger', authenticate, enforceSubscription, vendorLedgerRoutes);
+app.use('/api/v1/print-jobs',   authenticate, enforceSubscription, printJobRoutes);
 
 // SPA fallback — serve index.html for any non-API GET request so React Router works
 app.get('*', (req, res, next) => {

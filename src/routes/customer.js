@@ -3,10 +3,13 @@ const multer = require('multer');
 const { getDb } = require('../config/database');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/response');
-const { buildPaginatedQuery, paginatedResponse } = require('../utils/pagination');
+const { buildPaginatedQuery, paginatedResponse, aliasFilterColumn } = require('../utils/pagination');
 
 const router = express.Router();
 const ALLOWED_COLUMNS = ['id', 'name', 'contact_number', 'email', 'address', 'created_date', 'last_updated_date'];
+// Clients filter/search by "contact" (matching the CustomerDTO field name below) — alias it
+// to the real column so that search-by-contact actually filters instead of silently no-op'ing.
+const FILTER_ALIASES = { contact: 'contact_number' };
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // Maps to Spring Boot CustomerDTO exactly: {id, name, contact, email}
@@ -167,7 +170,7 @@ router.get('/customer-list', authenticate, (req, res) => {
     // Spring Boot customer-list default sort: "id, desc"
     const { query, countQuery, params, countParams } = buildPaginatedQuery(
       base, count, [req.user.shop_key],
-      safePage - 1, safeSize, sorting || 'id,DESC', filterColumn, operator, filterValue, ALLOWED_COLUMNS
+      safePage - 1, safeSize, sorting || 'id,DESC', aliasFilterColumn(filterColumn, FILTER_ALIASES), operator, filterValue, ALLOWED_COLUMNS
     );
 
     const items = db.prepare(query).all(...params).map(toCustomerDTO);

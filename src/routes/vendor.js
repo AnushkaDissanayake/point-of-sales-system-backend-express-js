@@ -3,11 +3,14 @@ const multer = require('multer');
 const { getDb } = require('../config/database');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/response');
-const { buildPaginatedQuery, paginatedResponse } = require('../utils/pagination');
+const { buildPaginatedQuery, paginatedResponse, aliasFilterColumn } = require('../utils/pagination');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const ALLOWED_COLUMNS = ['id', 'name', 'contact_number', 'email', 'address', 'created_date', 'last_updated_date', 'next_arrival_date'];
+// Clients filter/search by "contact" (matching the VendorDTO field name) — alias it to the
+// real column so search-by-contact actually filters instead of silently no-op'ing.
+const FILTER_ALIASES = { contact: 'contact_number' };
 
 function getVendorCategories(db, vendorId) {
   return db.prepare(`
@@ -156,7 +159,7 @@ router.get('/vendor-list', authenticate, (req, res) => {
 
     const { query, countQuery, params, countParams } = buildPaginatedQuery(
       base, count, [req.user.shop_key],
-      safePage - 1, safeSize, sorting || 'id,DESC', filterColumn, operator, filterValue, ALLOWED_COLUMNS
+      safePage - 1, safeSize, sorting || 'id,DESC', aliasFilterColumn(filterColumn, FILTER_ALIASES), operator, filterValue, ALLOWED_COLUMNS
     );
 
     const items = db.prepare(query).all(...params);

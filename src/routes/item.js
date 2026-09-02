@@ -14,6 +14,10 @@ const ALLOWED_COLUMNS = ['i.id', 'i.name', 'i.item_code', 'i.price', 'i.quantity
 
 const VALID_PAYMENT_METHODS = ['CASH', 'CARD', 'ONLINE', 'CHEQUE', 'TRANSFER'];
 
+// Unit of measure for an item's stock quantity (default: plain count)
+const VALID_UNITS = ['qty', 'g', 'kg', 'ft', 'sqft'];
+const normalizeUnit = (value) => VALID_UNITS.includes(value) ? value : 'qty';
+
 // Parses item data from either JSON body or multipart "item" param (matches Spring Boot @RequestParam("item"))
 function parseItemJson(req) {
   if (req.body && req.body.item) {
@@ -35,6 +39,10 @@ router.post('/add-item', authenticate, requirePermission('MANAGE_INVENTORY'), up
     const discount = parseFloat(data.discount) || 0;
     const categoryId = data.category || data.categoryId || null;
     const vendorId = data.vendor || data.vendorId || null;
+    const glassThickness = data.glassThickness !== undefined && data.glassThickness !== null && data.glassThickness !== ''
+      ? parseFloat(data.glassThickness) : null;
+    const isMirror = data.isMirror === true || data.isMirror === 'true' || data.isMirror === 1 ? 1 : 0;
+    const unit = normalizeUnit(data.unit);
 
     if (!name) return errorResponse(res, 400, 'E001', 'Invalid item name');
     if (price < 0) return errorResponse(res, 400, 'E001', "Price can't be negative");
@@ -62,9 +70,9 @@ router.post('/add-item', authenticate, requirePermission('MANAGE_INVENTORY'), up
 
     const shop = db.prepare('SELECT id FROM shop_detail WHERE shop_key = ?').get(req.user.shop_key);
     const result = db.prepare(`
-      INSERT INTO item (item_code, name, description, price, quantity, buying_price, discount, category_id, vendor_id, shop_id, shop_key, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(itemCode || null, name, description, price, quantity, buyingPrice, discount, categoryId || null, vendorId || null, shop?.id || null, req.user.shop_key, req.user.id);
+      INSERT INTO item (item_code, name, description, price, quantity, buying_price, discount, category_id, vendor_id, glass_thickness_mm, is_mirror, unit, shop_id, shop_key, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(itemCode || null, name, description, price, quantity, buyingPrice, discount, categoryId || null, vendorId || null, glassThickness, isMirror, unit, shop?.id || null, req.user.shop_key, req.user.id);
 
     if (req.file) {
       db.prepare('INSERT OR REPLACE INTO item_image (item_id, image) VALUES (?, ?)').run(result.lastInsertRowid, req.file.buffer);
@@ -98,6 +106,10 @@ router.post('/edit-item', authenticate, requirePermission('MANAGE_INVENTORY'), u
     const description = data.description || '';
     const categoryId = data.category || data.categoryId || null;
     const vendorId = data.vendor || data.vendorId || null;
+    const glassThickness = data.glassThickness !== undefined && data.glassThickness !== null && data.glassThickness !== ''
+      ? parseFloat(data.glassThickness) : null;
+    const isMirror = data.isMirror === true || data.isMirror === 'true' || data.isMirror === 1 ? 1 : 0;
+    const unit = normalizeUnit(data.unit);
 
     if (price < 0) return errorResponse(res, 400, 'E001', "Price can't be negative");
     if (quantity < 0) return errorResponse(res, 400, 'E001', "Quantity can't be negative");
@@ -124,10 +136,10 @@ router.post('/edit-item', authenticate, requirePermission('MANAGE_INVENTORY'), u
 
     db.prepare(`
       UPDATE item SET item_code = ?, name = ?, description = ?, price = ?, quantity = ?, buying_price = ?,
-        discount = ?, category_id = ?, vendor_id = ?, updated_by = ?, last_updated_date = datetime('now', 'localtime')
+        discount = ?, category_id = ?, vendor_id = ?, glass_thickness_mm = ?, is_mirror = ?, unit = ?, updated_by = ?, last_updated_date = datetime('now', 'localtime')
       WHERE id = ?
     `).run(itemCode.trim(), name, description, price, quantity, buyingPrice, discount,
-        categoryId || item.category_id, vendorId || item.vendor_id, req.user.id, id);
+        categoryId || item.category_id, vendorId || item.vendor_id, glassThickness, isMirror, unit, req.user.id, id);
 
     if (req.file) {
       db.prepare('INSERT OR REPLACE INTO item_image (item_id, image) VALUES (?, ?)').run(id, req.file.buffer);
@@ -169,7 +181,10 @@ router.get('/by-code/:itemCode', authenticate, (req, res) => {
       vendor: item.vendor_id,
       buyingPrice: canSeeCost ? item.buying_price : null,
       discount: item.discount,
-      description: canSeeCost ? item.description : null
+      description: canSeeCost ? item.description : null,
+      glassThickness: item.glass_thickness_mm,
+      isMirror: !!item.is_mirror,
+      unit: normalizeUnit(item.unit)
     });
   } catch (err) {
     return errorResponse(res, 500, 'E000', err.message);
@@ -220,7 +235,7 @@ router.get('/item-list', authenticate, (req, res) => {
     const db = getDb();
 
     const base = `SELECT i.id, i.item_code, i.name, i.description, i.price, i.quantity, i.buying_price, i.discount,
-      i.category_id, i.vendor_id, i.shop_key, i.created_by, i.created_date, i.last_updated_date,
+      i.category_id, i.vendor_id, i.glass_thickness_mm, i.is_mirror, i.unit, i.shop_key, i.created_by, i.created_date, i.last_updated_date,
       c.name as category_name, v.name as vendor_name
       FROM item i
       LEFT JOIN category c ON i.category_id = c.id
@@ -249,7 +264,10 @@ router.get('/item-list', authenticate, (req, res) => {
       vendor: i.vendor_id,
       buyingPrice: canSeeCost ? i.buying_price : null,
       discount: i.discount,
-      description: canSeeCost ? i.description : null
+      description: canSeeCost ? i.description : null,
+      glassThickness: i.glass_thickness_mm,
+      isMirror: !!i.is_mirror,
+      unit: normalizeUnit(i.unit)
     }));
 
     // ItemListResponseDTO { itemList: Page } — number is 0-based (Spring Page.getNumber())

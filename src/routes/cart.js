@@ -6,10 +6,29 @@ const { buildPaginatedQuery, paginatedResponse } = require('../utils/pagination'
 const { createLowStockNotification, createSaleNotification, getLowStockThreshold } = require('../services/notificationService');
 const { broadcast } = require('./events');
 const { getCustomerBalance, getEffectiveCreditLimit } = require('./ledger');
+const { createPrintJob } = require('../services/printJobService');
 
 const router = express.Router();
 const ALLOWED_COLUMNS = ['c.id', 'c.status', 'c.payment_method', 'c.created_date', 'c.last_updated_date', 'c.amount_paid', 'id', 'status', 'payment_method', 'created_date', 'last_updated_date', 'amount_paid'];
 const VALID_PAYMENT_METHODS = ['CASH', 'CARD', 'ONLINE', 'CHEQUE', 'TRANSFER'];
+const VALID_UNITS = ['qty', 'g', 'kg', 'ft', 'sqft'];
+const normalizeUnit = (value) => VALID_UNITS.includes(value) ? value : 'qty';
+
+// Glass calculator dimension breakdown -- stored as JSON on cart_item, merged when the
+// same glass item is added to a cart more than once.
+function parseGlassDimensionsArray(json) {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function mergeGlassDimensions(existingJson, incomingJson) {
+  const merged = [...parseGlassDimensionsArray(existingJson), ...parseGlassDimensionsArray(incomingJson)];
+  return merged.length ? JSON.stringify(merged) : null;
+}
 
 // Returns CartDetailResponseDTO matching Spring Boot exactly
 // Fields: cartId, status, customerId, customerName, customerContact, displayName,
@@ -28,7 +47,7 @@ function getCartDetail(db, cartId, shopKey) {
   if (!cart) return null;
 
   const rawItems = db.prepare(`
-    SELECT ci.*, i.name as item_name, i.item_code, i.price as item_price
+    SELECT ci.*, i.name as item_name, i.item_code, i.price as item_price, i.unit as item_unit
     FROM cart_item ci
     JOIN item i ON ci.item_id = i.id
     WHERE ci.cart_id = ?
@@ -43,6 +62,8 @@ function getCartDetail(db, cartId, shopKey) {
     itemId: ci.item_id,
     itemName: ci.item_name,
     itemCode: ci.item_code,
+    unit: normalizeUnit(ci.item_unit),
+    glassDimensions: ci.glass_dimensions ? parseGlassDimensionsArray(ci.glass_dimensions) : null,
     lineTotal: Math.max(0, Math.round((ci.sold_price * ci.quantity - (ci.discount || 0)) * 100) / 100)
   }));
 
@@ -256,10 +277,11 @@ router.post('/add-cartItem', authenticate, (req, res) => {
       ).get(cartId, line.itemId, soldPrice, discount);
 
       if (existing) {
-        db.prepare('UPDATE cart_item SET quantity = quantity + ? WHERE id = ?').run(qty, existing.id);
+        const mergedDimensions = mergeGlassDimensions(existing.glass_dimensions, line.glassDimensions);
+        db.prepare('UPDATE cart_item SET quantity = quantity + ?, glass_dimensions = ? WHERE id = ?').run(qty, mergedDimensions, existing.id);
       } else {
-        db.prepare(`INSERT INTO cart_item (cart_id, item_id, quantity, sold_price, discount) VALUES (?, ?, ?, ?, ?)`)
-          .run(cartId, line.itemId, qty, soldPrice, discount);
+        db.prepare(`INSERT INTO cart_item (cart_id, item_id, quantity, sold_price, discount, glass_dimensions) VALUES (?, ?, ?, ?, ?, ?)`)
+          .run(cartId, line.itemId, qty, soldPrice, discount, line.glassDimensions || null);
       }
     }
 
@@ -299,7 +321,7 @@ router.get('/:cartId/detail', authenticate, (req, res) => {
 // Cannot change item, can update quantity/discount/soldPrice; returns SuccessResponseDTO
 router.put('/edit-cart', authenticate, (req, res) => {
   try {
-    const { id, itemId, quantity, soldPrice, discount } = req.body;
+    const { id, itemId, quantity, soldPrice, discount, glassDimensions } = req.body;
     if (!id) return errorResponse(res, 400, 'E002', 'Cart item id is required');
 
     const db = getDb();
@@ -325,6 +347,9 @@ router.put('/edit-cart', authenticate, (req, res) => {
     }
     if (soldPrice !== undefined && soldPrice !== null) {
       db.prepare('UPDATE cart_item SET sold_price = ? WHERE id = ?').run(parseFloat(soldPrice), id);
+    }
+    if (glassDimensions !== undefined) {
+      db.prepare('UPDATE cart_item SET glass_dimensions = ? WHERE id = ?').run(glassDimensions || null, id);
     }
 
     db.prepare(`UPDATE cart SET updated_by = ?, last_updated_date = datetime('now', 'localtime') WHERE id = ?`).run(req.user.id, cartItem.cart_id);
@@ -386,7 +411,7 @@ router.post('/update-cart', authenticate, (req, res) => {
 
 router.post('/complete-cart', authenticate, (req, res) => {
   try {
-    const { cartId, paymentMethod, amountPaid, paymentReference } = req.body;
+    const { cartId, paymentMethod, amountPaid, paymentReference, remotePrint } = req.body;
     if (!cartId) return errorResponse(res, 400, 'E002', 'Cart id is required');
 
     const pm = (paymentMethod || '').trim().toLowerCase();
@@ -480,6 +505,17 @@ router.post('/complete-cart', authenticate, (req, res) => {
 
     const grandTotal = Math.round(total * 100) / 100;
     const changeDue = Math.round((resolvedAmountPaid - grandTotal) * 100) / 100;
+
+    if (remotePrint === true) {
+      createPrintJob(db, req.user.shop_key, parseInt(cartId), {
+        cashierName: req.user.first_name || req.user.user_name,
+        grandTotal,
+        amountPaid: resolvedAmountPaid,
+        changeDue,
+        paymentMethod: resolvedPayment,
+        paymentReference: resolvedReference,
+      });
+    }
 
     // ExpressSaleResponseDTO matches Spring Boot: {status, message, cartId, grandTotal, changeDue}
     return successResponse(res, {

@@ -330,6 +330,43 @@ function initializeDatabase() {
     db.exec('ALTER TABLE cart ADD COLUMN payment_reference TEXT');
   }
 
+  // Glass category items: thickness (mm) and mirror flag, captured for future sq-ft price calculation
+  const itemCols = db.prepare("PRAGMA table_info(item)").all();
+  if (!itemCols.some(c => c.name === 'glass_thickness_mm')) {
+    db.exec('ALTER TABLE item ADD COLUMN glass_thickness_mm REAL DEFAULT NULL');
+  }
+  if (!itemCols.some(c => c.name === 'is_mirror')) {
+    db.exec('ALTER TABLE item ADD COLUMN is_mirror INTEGER DEFAULT 0');
+  }
+  if (!itemCols.some(c => c.name === 'unit')) {
+    db.exec("ALTER TABLE item ADD COLUMN unit TEXT DEFAULT 'qty'");
+  }
+
+  // Glass sale line breakdown: JSON array of {widthRaw, lengthRaw, pieces, sqft}
+  // entered via the glass quantity calculator, kept for later reference/printing
+  const cartItemCols = db.prepare("PRAGMA table_info(cart_item)").all();
+  if (!cartItemCols.some(c => c.name === 'glass_dimensions')) {
+    db.exec('ALTER TABLE cart_item ADD COLUMN glass_dimensions TEXT');
+  }
+
+  // Remote print relay: a durable queue so a sale completed on one device (e.g. mobile)
+  // can be printed by whichever PC has the shop's receipt printer attached. A job survives
+  // that PC being offline at the moment of sale -- it just sits 'pending' until the PC
+  // reconnects and polls, so nothing is silently lost to a connection drop.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS print_job (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      shop_key TEXT NOT NULL,
+      cart_id INTEGER,
+      status TEXT NOT NULL DEFAULT 'pending',
+      receipt_json TEXT NOT NULL,
+      created_date TEXT DEFAULT (datetime('now', 'localtime')),
+      printed_date TEXT,
+      FOREIGN KEY (shop_key) REFERENCES shop_detail(shop_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_print_job_shop_status ON print_job(shop_key, status, created_date);
+  `);
+
   // Ledger: seed DEFAULT_CREDIT_LIMIT shop setting for all existing shops
   const shops = db.prepare('SELECT shop_key FROM shop_detail').all();
   const settingInsert = db.prepare(`

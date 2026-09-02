@@ -5,13 +5,14 @@ const { successResponse, errorResponse } = require('../utils/response');
 const { createLowStockNotification, createSaleNotification, getLowStockThreshold } = require('../services/notificationService');
 const { broadcast } = require('./events');
 const { getCustomerBalance, getEffectiveCreditLimit } = require('./ledger');
+const { createPrintJob } = require('../services/printJobService');
 
 const router = express.Router();
 const VALID_PAYMENT_METHODS = ['CASH', 'CARD', 'ONLINE', 'CHEQUE', 'TRANSFER', 'CREDIT'];
 
 router.post('/complete', authenticate, (req, res) => {
   try {
-    const { customerName, customerContact, notes, amountPaid, paymentMethod, paymentReference, lines } = req.body;
+    const { customerName, customerContact, notes, amountPaid, paymentMethod, paymentReference, lines, remotePrint } = req.body;
 
     if (!lines || !Array.isArray(lines) || lines.length === 0) {
       return errorResponse(res, 400, 'E002', 'Cart is empty');
@@ -90,9 +91,9 @@ router.post('/complete', authenticate, (req, res) => {
         const discount = line.discount !== undefined ? parseFloat(line.discount) : 0;
 
         db.prepare(`
-          INSERT INTO cart_item (cart_id, item_id, quantity, sold_price, discount)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(cartId, line.itemId, qty, soldPrice, discount);
+          INSERT INTO cart_item (cart_id, item_id, quantity, sold_price, discount, glass_dimensions)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(cartId, line.itemId, qty, soldPrice, discount, line.glassDimensions || null);
 
         db.prepare(`UPDATE item SET quantity = quantity - ?, last_updated_date = datetime('now', 'localtime') WHERE id = ?`).run(qty, line.itemId);
 
@@ -146,6 +147,17 @@ router.post('/complete', authenticate, (req, res) => {
 
     const grandTotal = Math.round(total * 100) / 100;
     const changeDue = Math.round((finalAmountPaid - grandTotal) * 100) / 100;
+
+    if (remotePrint === true) {
+      createPrintJob(db, req.user.shop_key, cartId, {
+        cashierName: req.user.first_name || req.user.user_name,
+        grandTotal,
+        amountPaid: finalAmountPaid,
+        changeDue,
+        paymentMethod: resolvedPayment,
+        paymentReference: resolvedReference,
+      });
+    }
 
     return successResponse(res, { cartId, grandTotal, changeDue }, 'Sale completed successfully');
   } catch (err) {
