@@ -98,14 +98,15 @@ router.get('/:userId/detail', authenticate, requireAdmin, (req, res) => {
 });
 
 // POST /edit-user (ADMIN only)
-router.post('/edit-user', authenticate, requireAdmin, upload.single('image'), async (req, res) => {
+router.post('/edit-user', authenticate, requireAdmin, upload.single('file'), async (req, res) => {
   try {
     // Spring Boot uses @RequestParam("user") String userJson (multipart) — parse JSON param when present
     let body = req.body;
     if (req.body && req.body.user) {
       try { body = JSON.parse(req.body.user); } catch { body = req.body; }
     }
-    const { userId, firstName, lastName, mobile, address, nic, enabled, permissions } = body;
+    // Frontend UserJSON uses "id" and "nationalIdentity" — matches Spring Boot's rootNode.path("id")/("nationalIdentity")
+    const { id: userId, firstName, lastName, mobile, address, nationalIdentity, enabled, permissions } = body;
     if (!userId) return errorResponse(res, 400, 'E002', 'userId required');
 
     const db = getDb();
@@ -123,7 +124,7 @@ router.post('/edit-user', authenticate, requireAdmin, upload.single('image'), as
     db.prepare(`
       UPDATE user_detail SET first_name = ?, last_name = ?, mobile = ?, address = ?, nic = ?, last_updated_date = datetime('now', 'localtime') ${imgSql}
       WHERE user_id = ?
-    `).run(firstName, lastName, mobile, address, nic, ...imgParams, userId);
+    `).run(firstName, lastName, mobile, address, nationalIdentity, ...imgParams, userId);
 
     if (enabled !== undefined && user.id !== req.user.id) {
       const enabledVal = enabled === 'true' || enabled === true ? 1 : 0;
@@ -157,7 +158,9 @@ router.post('/edit-user', authenticate, requireAdmin, upload.single('image'), as
 });
 
 // POST /invite-user (ADMIN only) — matches Spring Boot UserAdminService.inviteUser()
-router.post('/invite-user', authenticate, requireAdmin, async (req, res) => {
+// upload.none() is required so multer parses the multipart "user" text field into req.body —
+// without it req.body is always empty for a multipart request, so every invite failed with "Email is required."
+router.post('/invite-user', authenticate, requireAdmin, upload.none(), async (req, res) => {
   try {
     // Spring Boot uses @RequestParam("user") String userJson — parse JSON param when present
     let body = req.body;
@@ -297,7 +300,7 @@ router.get('/me/profile', authenticate, (req, res) => {
 });
 
 // POST /me/profile
-router.post('/me/profile', authenticate, upload.single('image'), (req, res) => {
+router.post('/me/profile', authenticate, upload.single('file'), (req, res) => {
   try {
     // Spring Boot uses @RequestParam("user") String userJson — parse JSON param when present
     let body = req.body;

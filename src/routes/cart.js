@@ -175,12 +175,23 @@ router.post('/add-cart', authenticate, (req, res) => {
   }
 });
 
-// Maps cart row to CartResponceDTO shape — includes itemCount and totalAmount
-function toCartResponseDTO(db, cart) {
-  const agg = db.prepare(`
-    SELECT COUNT(*) as itemCount, COALESCE(SUM(sold_price * quantity - discount), 0) as totalAmount
-    FROM cart_item WHERE cart_id = ?
-  `).get(cart.id);
+// Batches item-count/total aggregates for a set of carts in one grouped query (avoids N+1
+// per-cart queries when rendering a list).
+function getCartAggregatesMap(db, cartIds) {
+  const map = new Map();
+  if (!cartIds.length) return map;
+  const placeholders = cartIds.map(() => '?').join(',');
+  const rows = db.prepare(`
+    SELECT cart_id, COUNT(*) as itemCount, COALESCE(SUM(sold_price * quantity - discount), 0) as totalAmount
+    FROM cart_item WHERE cart_id IN (${placeholders})
+    GROUP BY cart_id
+  `).all(...cartIds);
+  rows.forEach(r => map.set(r.cart_id, r));
+  return map;
+}
+
+// Maps cart row + its (possibly batched) aggregate to CartResponceDTO shape
+function mapCartRow(cart, agg) {
   const displayName = cartDisplayName(cart.customer_name, cart.customer_contact);
   return {
     id: cart.id,
@@ -189,8 +200,8 @@ function toCartResponseDTO(db, cart) {
     customerName: cart.customer_name,
     customerContact: cart.customer_contact,
     displayName,
-    itemCount: agg.itemCount,
-    totalAmount: Math.round(agg.totalAmount * 100) / 100,
+    itemCount: agg ? agg.itemCount : 0,
+    totalAmount: agg ? Math.round(agg.totalAmount * 100) / 100 : 0,
     lastUpdatedDate: cart.last_updated_date ? cart.last_updated_date.replace(' ', 'T').replace('Z', '') : null
   };
 }
@@ -198,6 +209,8 @@ function toCartResponseDTO(db, cart) {
 router.get('/ongoing-carts', authenticate, (req, res) => {
   try {
     const db = getDb();
+    // Frontend calls this with no page/size — keeping it unbounded to match existing
+    // behaviour; only the N+1 per-cart aggregate query below is what's fixed here.
     const rows = db.prepare(`
       SELECT c.*, cu.name as customer_name, cu.contact_number as customer_contact
       FROM cart c
@@ -205,7 +218,8 @@ router.get('/ongoing-carts', authenticate, (req, res) => {
       WHERE c.shop_key = ? AND c.status = 0
       ORDER BY c.last_updated_date DESC
     `).all(req.user.shop_key);
-    const carts = rows.map(c => toCartResponseDTO(db, c));
+    const aggMap = getCartAggregatesMap(db, rows.map(r => r.id));
+    const carts = rows.map(c => mapCartRow(c, aggMap.get(c.id)));
     // CartOngoingListResponseDTO { carts: [...] }
     return successResponse(res, { carts });
   } catch (err) {
@@ -239,7 +253,8 @@ router.get('/get-carts', authenticate, (req, res) => {
 
     const rows = db.prepare(query).all(...qParams);
     const total = db.prepare(countQuery).get(...countParams).total;
-    const items = rows.map(c => toCartResponseDTO(db, c));
+    const aggMap = getCartAggregatesMap(db, rows.map(r => r.id));
+    const items = rows.map(c => mapCartRow(c, aggMap.get(c.id)));
 
     // CartListItemResponseDTO { cartList: Page } — number is 0-based (Spring Page.getNumber())
     return successResponse(res, { cartList: paginatedResponse(items, total, safePage - 1, safeSize) });

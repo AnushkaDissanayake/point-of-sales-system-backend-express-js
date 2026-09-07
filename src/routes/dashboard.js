@@ -217,8 +217,8 @@ router.get('/', authenticate, requirePermission('DASHBOARD'), (req, res) => {
       SELECT id, name, item_code, quantity FROM item
       WHERE shop_key = ? AND quantity <= ?
       ORDER BY quantity ASC
-      LIMIT 10
-    `).all(shopKey, threshold).slice(0, 5);
+      LIMIT 5
+    `).all(shopKey, threshold);
 
     // Peak hour — hour with most completed carts in current period
     const peakHourRow = db.prepare(`

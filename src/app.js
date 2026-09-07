@@ -152,6 +152,12 @@ try {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`Received ${signal}, shutting down gracefully...`);
+    try {
+      const { stopDiscovery } = require('./services/networkDiscoveryService');
+      stopDiscovery();
+    } catch (discoveryErr) {
+      console.error('Error stopping network discovery services:', discoveryErr.message);
+    }
     server.close(() => {
       try {
         getDb().close();

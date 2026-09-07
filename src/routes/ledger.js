@@ -142,38 +142,47 @@ router.get('/customer/:customerId/entries', authenticate, (req, res) => {
 
     const total = db.prepare('SELECT COUNT(*) as total FROM customer_ledger WHERE customer_id = ? AND shop_key = ?').get(customerId, req.user.shop_key).total;
 
-    // All entries for running balance calculation
-    const allEntries = db.prepare(`
+    // Fetch only the requested page — not the customer's entire ledger history.
+    const pageRows = db.prepare(`
       SELECT l.*, u.user_name as created_by_name
       FROM customer_ledger l
       LEFT JOIN usr_user u ON l.created_by = u.id
       WHERE l.customer_id = ? AND l.shop_key = ?
-      ORDER BY l.id ASC
-    `).all(customerId, req.user.shop_key);
+      ORDER BY l.id DESC
+      LIMIT ? OFFSET ?
+    `).all(customerId, req.user.shop_key, safeSize, offset);
 
-    // Compute running balance for all entries
-    let running = 0;
-    const allWithBalance = allEntries.map(e => {
-      if (e.entry_type === 'DEBIT') running += e.amount;
-      else running -= e.amount;
-      return { ...e, runningBalance: Math.round(running * 100) / 100 };
+    // Running balance for the newest row on this page = overall balance minus the net
+    // effect of the `offset` rows newer than this page (bounded scan; 0 rows for page 1).
+    const balance = getCustomerBalance(db, customerId, req.user.shop_key);
+    let running = balance.totalDebit - balance.totalCredit;
+    if (offset > 0) {
+      const newer = db.prepare(`
+        SELECT COALESCE(SUM(CASE WHEN entry_type = 'DEBIT' THEN amount ELSE -amount END), 0) AS newerSum
+        FROM (
+          SELECT entry_type, amount FROM customer_ledger
+          WHERE customer_id = ? AND shop_key = ?
+          ORDER BY id DESC LIMIT ?
+        )
+      `).get(customerId, req.user.shop_key, offset);
+      running -= newer.newerSum;
+    }
+
+    const items = pageRows.map(e => {
+      const runningBalance = Math.round(running * 100) / 100;
+      running -= (e.entry_type === 'DEBIT' ? e.amount : -e.amount);
+      return {
+        id: e.id,
+        entryType: e.entry_type,
+        amount: e.amount,
+        referenceType: e.reference_type,
+        referenceId: e.reference_id,
+        notes: e.notes,
+        createdDate: e.created_date,
+        createdByName: e.created_by_name,
+        runningBalance
+      };
     });
-
-    // Paginate (latest first for display)
-    const reversed = [...allWithBalance].reverse();
-    const paged = reversed.slice(offset, offset + safeSize);
-
-    const items = paged.map(e => ({
-      id: e.id,
-      entryType: e.entry_type,
-      amount: e.amount,
-      referenceType: e.reference_type,
-      referenceId: e.reference_id,
-      notes: e.notes,
-      createdDate: e.created_date,
-      createdByName: e.created_by_name,
-      runningBalance: e.runningBalance
-    }));
 
     return successResponse(res, { entries: paginatedResponse(items, total, safePage - 1, safeSize) });
   } catch (err) {
